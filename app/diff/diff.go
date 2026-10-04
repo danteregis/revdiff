@@ -336,8 +336,15 @@ func (g *Git) CommitLog(ref string) ([]CommitInfo, error) {
 }
 
 // commitLogRange translates a combined ref string to git's log range syntax.
-// Single ref "X" becomes "X..HEAD"; "X..Y" passes through.
+// Single ref "X" becomes "X..HEAD"; "X..Y" passes through. A three-dot "X...Y"
+// becomes "X..Y": `git diff X...Y` shows the changes since Y forked from X, and
+// the commits that make up exactly that diff are the ones on Y but not on X —
+// `git log X...Y` would instead list the symmetric difference and include
+// commits that landed on X meanwhile (GitHub's PR commit list matches X..Y).
 func (g *Git) commitLogRange(ref string) string {
+	if left, right, ok := strings.Cut(ref, "..."); ok {
+		return left + ".." + right
+	}
 	if strings.Contains(ref, "..") {
 		return ref
 	}

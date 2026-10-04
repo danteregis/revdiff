@@ -1242,7 +1242,8 @@ func TestGit_CommitLogRange(t *testing.T) {
 		{"single ref maps to range ending at HEAD", "main", "main..HEAD"},
 		{"explicit range passes through", "main..feature", "main..feature"},
 		{"explicit range with ref that contains dots not a range", "v1.2.3", "v1.2.3..HEAD"},
-		{"three-dot syntax treated as range", "main...feature", "main...feature"},
+		{"three-dot lists commits on the right side only", "main...feature", "main..feature"},
+		{"three-dot with empty right side", "main...", "main.."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
