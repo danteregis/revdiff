@@ -205,6 +205,11 @@ func (m Model) reviewHeaderText() string {
 	if cfg == nil {
 		return ""
 	}
+	// a branch or PR picked in the review switcher is named by its label; the
+	// raw three-dot ref (two full commit ids for a PR) goes to the "ref" row.
+	if m.refs.label != "" {
+		return m.refs.label
+	}
 	switch {
 	case cfg.Stdin:
 		if cfg.StdinName != "" {
@@ -269,6 +274,9 @@ func (m Model) reviewRows() []overlay.InfoRow {
 		return nil
 	}
 	var rows []overlay.InfoRow
+	if m.refs.label != "" {
+		rows = append(rows, overlay.InfoRow{Label: "ref", Value: cfg.Ref})
+	}
 	if f := m.reviewListFlag(cfg.Only); f != "" {
 		rows = append(rows, overlay.InfoRow{Label: "only", Value: f})
 	}

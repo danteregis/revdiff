@@ -309,7 +309,7 @@ func TestSource_CheckRef(t *testing.T) {
 	dir := newRepo(t)
 	s := New(dir)
 	for _, ref := range []string{"main", "feature", "main...feature", "main..feature", "HEAD~0..", "...feature", " main "} {
-		assert.NoError(t, s.CheckRef(ref), ref)
+		require.NoError(t, s.CheckRef(ref), ref)
 	}
 	for _, ref := range []string{"", "nope", "main...nope", "-x", "--output=/tmp/x", "main..--x", "main feature"} {
 		assert.Error(t, s.CheckRef(ref), ref)

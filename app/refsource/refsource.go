@@ -149,9 +149,8 @@ func (s *Source) PullRequests() ([]PullRequest, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
 	defer cancel()
 
-	args := []string{"pr", "list", "--state", "open", "--limit", strconv.Itoa(prListLimit),
-		"--json", "number,title,headRefName,baseRefName,author,isDraft"}
-	args = append(args, s.repoArgs(ctx)...)
+	args := append([]string{"pr", "list", "--state", "open", "--limit", strconv.Itoa(prListLimit),
+		"--json", "number,title,headRefName,baseRefName,author,isDraft"}, s.repoArgs(ctx)...)
 	out, err := s.gh(ctx, args...)
 	if err != nil {
 		return nil, err

@@ -72,6 +72,7 @@ const (
 	ActionThemeSelect            Action = "theme_select"
 	ActionInfo                   Action = "info"
 	ActionReload                 Action = "reload"
+	ActionSwitchRef              Action = "switch_ref"
 	ActionOpenEditor             Action = "open_editor"
 	ActionOpenFileInEditor       Action = "open_file_in_editor"
 	ActionFlushOutput            Action = "flush_output"
@@ -101,6 +102,7 @@ var validActions = map[Action]bool{
 	ActionQuit: true, ActionDiscardQuit: true, ActionHelp: true, ActionDismiss: true, ActionThemeSelect: true,
 	ActionInfo:             true,
 	ActionReload:           true,
+	ActionSwitchRef:        true,
 	ActionOpenEditor:       true,
 	ActionOpenFileInEditor: true,
 	ActionFlushOutput:      true,
@@ -254,6 +256,7 @@ func defaultDescriptions() []HelpEntry {
 		{ActionThemeSelect, "theme selector", "View"},
 		{ActionInfo, "show review info popup", "View"},
 		{ActionReload, "reload diff from VCS", "View"},
+		{ActionSwitchRef, "switch review to a branch, PR, or ref", "View"},
 
 		// quit
 		{ActionQuit, "quit", "Quit"},
@@ -318,6 +321,7 @@ func defaultBindings() map[string]Action {
 		"T":      ActionThemeSelect,
 		"i":      ActionInfo,
 		"R":      ActionReload,
+		"b":      ActionSwitchRef,
 		"esc":    ActionDismiss,
 	}
 }
