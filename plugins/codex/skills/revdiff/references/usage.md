@@ -183,8 +183,11 @@ Press `Space` to mark the focused file reviewed. Press `F` to toggle the sidebar
 | `?` | Toggle help overlay showing all keybindings |
 | `i` | Toggle info popup — review scope (mode, VCS, ref, filters, file/status counts, aggregate `+/-` stats) plus the commit log for the current ref range when applicable |
 | `R` | Reload diff from VCS (warns if annotations exist) |
+| `b` | Switch the review to a branch, an open pull request, or a typed ref (git only; warns if annotations exist) |
 | `q` | Quit, output annotations to stdout |
 | `Q` | Discard all annotations and quit (confirms if annotations exist) |
+
+The `b` switcher (`switch_ref`) lists the original review, open GitHub pull requests (via `gh`, when installed and authenticated), and local branches. Branches and pull requests use GitHub's three-dot comparison: a branch `X` is reviewed as `<base>...X` (base: `origin/HEAD`, else `origin`/`upstream` `main`/`master`, else local `main`/`master`), and a pull request is fetched into `FETCH_HEAD` only (no branch created or moved, working tree untouched) and reviewed as `<base commit>...<head commit>`. Typing filters the list; the `use "<text>"` row (the only row when nothing matches) uses the typed text as a ref after validation. Switching reloads like `R` and drops annotations after a `y` confirmation. Not available with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in hg/jj repositories.
 
 ## Status Bar Icons
 

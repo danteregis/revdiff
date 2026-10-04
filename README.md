@@ -830,8 +830,23 @@ Press `Space` to mark the focused file reviewed. Press `F` to toggle the sidebar
 | `?` | Toggle help overlay showing all keybindings |
 | `i` | Toggle info popup — review scope (mode, VCS, ref, filters, file/status counts, aggregate `+/-` stats) plus the commit log for the current ref range when applicable |
 | `R` | Reload diff from VCS (warns if annotations exist) |
+| `b` | Switch the review to a branch, an open pull request, or a typed ref (git only; warns if annotations exist) |
 | `q` | Quit, output annotations to stdout |
 | `Q` | Discard all annotations and quit (confirms if annotations exist) |
+
+### Switching the Reviewed Diff
+
+Press `b` (`switch_ref`) to change what you are reviewing without restarting revdiff. The switcher lists three sections:
+
+- **original** — the review revdiff was started with (working tree, `--staged`, or the refs you passed)
+- **pull requests** — open GitHub pull requests from `gh pr list` (title, head → base, author, draft marker). Needs the [`gh`](https://cli.github.com/) CLI, authenticated; without it the section is replaced by a short notice and everything else keeps working
+- **branches** — local branches, most recently committed first
+
+Branches and pull requests use GitHub's three-dot comparison: only what changed on the branch since it forked from the base, not what landed on the base meanwhile. A branch `X` becomes `<base>...X`, where the base is the target of `origin/HEAD`, else the first existing of `origin/main`, `origin/master`, `upstream/main`, `upstream/master`, `main`, `master`. A pull request is fetched (`refs/pull/N/head` plus its base branch, into `FETCH_HEAD` only — no local branch is created or moved and the working tree is untouched) and reviewed as `<base commit>...<head commit>`, exactly the diff GitHub shows. gh is pinned to the repository `gh repo set-default` resolves to, else to `origin`'s URL, so it never prompts.
+
+Type to filter by name, title, author, or branch. Any typed text can also be used as a ref directly — pick the `use "<text>"` row (it is the only row when nothing matches), e.g. `main...feature`, `HEAD~3`, or `v1.2..v1.3`; it is validated before the switch. Arrow keys or the mouse wheel move, `Enter` or left-click switches, the first `Esc` clears the filter and the second closes the switcher.
+
+Switching reloads the file list and commit log like `R`. Existing annotations refer to lines of the previous diff, so revdiff asks for `y` before dropping them (`--no-confirm-reload` skips the prompt). The info popup (`i`) names the selected branch or pull request and shows the full ref, the commit list follows the new range, and the history auto-save records the ref that was on screen at exit. Reviewed marks survive only for files whose change is identical in the new diff. The switcher is available for git diffs; it is not offered with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in Mercurial and Jujutsu repositories.
 
 ### Status Bar Icons
 
@@ -867,8 +882,9 @@ revdiff enables mouse tracking by default so the scroll wheel and left-click wor
 - **Left-click in the theme popup**: confirms the clicked theme (same as pressing `Enter`). Clicks on the filter row or blank separator are ignored.
 - **Left-click in the file picker**: jumps to the clicked file (same as pressing `Enter`). Clicks on the filter row or blank separator are ignored.
 - **Scroll wheel in the file picker**: moves the picker cursor. Shift+wheel uses a half-page step.
+- **Left-click in the review switcher** (`b`): switches to the clicked branch, pull request, or typed ref. Section headers, the filter row, and the blank separator are ignored; the wheel moves the cursor.
 
-Horizontal wheel, right-click, middle-click, drag selection, and clicks on the status bar or diff header are intentionally ignored. Clicks outside an open overlay are swallowed — dismiss an overlay with `Esc` or its toggle key. Modal states (annotation input, search input, confirm discard, reload confirm) swallow mouse events entirely.
+Horizontal wheel, right-click, middle-click, drag selection, and clicks on the status bar or diff header are intentionally ignored. Clicks outside an open overlay are swallowed — dismiss an overlay with `Esc` or its toggle key. Modal states (annotation input, search input, confirm discard, reload confirm, review-switch confirm) swallow mouse events entirely.
 
 **Text selection trade-off** — once mouse tracking is on, plain drag is captured by revdiff. For terminal-native text selection:
 
@@ -942,7 +958,7 @@ When the leader is pressed, the status bar shows `Pending: ctrl+w, esc to cancel
 
 **Annotations:** `confirm` (annotate line / select file), `annotate_file`, `delete_annotation`, `annot_list`, `open_editor`, `next_annotation`, `prev_annotation`, `flush_output`, `quick_praise`
 
-**View:** `toggle_collapsed`, `toggle_compact`, `toggle_wrap`, `toggle_tree`, `toggle_line_numbers`, `toggle_blame`, `toggle_word_diff`, `toggle_hunk`, `toggle_untracked`, `mark_reviewed`, `filter_unreviewed`, `theme_select`, `filter`, `info`, `reload`
+**View:** `toggle_collapsed`, `toggle_compact`, `toggle_wrap`, `toggle_tree`, `toggle_line_numbers`, `toggle_blame`, `toggle_word_diff`, `toggle_hunk`, `toggle_untracked`, `mark_reviewed`, `filter_unreviewed`, `theme_select`, `filter`, `info`, `reload`, `switch_ref`
 
 **Quit:** `quit`, `discard_quit`, `help`, `dismiss`
 

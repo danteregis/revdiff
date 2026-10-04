@@ -143,7 +143,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// discarded. in the keyboard path the prompt is also replaced by a new
 	// hint from handlePendingReload, but mouse events don't transition the
 	// modal, so dropping the hint would leave an invisible modal.
-	if m.inConfirmDiscard || m.reload.pending || m.annot.annotating || m.search.active {
+	if m.inConfirmDiscard || m.reload.pending || m.refs.pending != nil || m.annot.annotating || m.search.active {
 		return m, nil
 	}
 	if m.overlay.Active() {
@@ -215,6 +215,8 @@ func (m Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.cancelThemeSelect()
 	case overlay.OutcomeFileChosen:
 		return m.jumpToFile(out.FileChoice.Path)
+	case overlay.OutcomeRefChosen:
+		return m.handleRefChoice(out.RefChoice)
 	case overlay.OutcomeClosed, overlay.OutcomeNone:
 	}
 	return m, nil

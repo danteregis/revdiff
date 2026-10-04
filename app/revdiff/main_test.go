@@ -144,6 +144,27 @@ func TestFinalize(t *testing.T) {
 	}
 }
 
+func TestFinalize_HistoryRecordsReviewedRef(t *testing.T) {
+	histDir := t.TempDir()
+	// started on the working tree (no refs in opts), switched at runtime to a branch
+	_, err := finalize(finalizeReq{
+		opts:        options{HistoryDir: histDir},
+		ref:         "origin/main...feature",
+		annotations: "## file.go:1 (+)\ncomment\n",
+		files:       []string{"file.go"},
+		workDir:     "repo",
+		signaled:    true,
+		stdout:      &bytes.Buffer{},
+	})
+	require.NoError(t, err)
+	matches, err := filepath.Glob(filepath.Join(histDir, "*", "*.md"))
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	data, err := os.ReadFile(matches[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "refs: origin/main...feature")
+}
+
 func historyFileCount(t *testing.T, dir string) int {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(dir, "*", "*.md"))

@@ -104,6 +104,8 @@ type overlayManager interface {
 	OpenAnnotList(spec overlay.AnnotListSpec)
 	OpenThemeSelect(spec overlay.ThemeSelectSpec)
 	OpenFilePicker(spec overlay.FilePickerSpec)
+	OpenRefPicker(spec overlay.RefPickerSpec)
+	UpdateRefPicker(spec overlay.RefPickerSpec)
 	OpenInfo(spec overlay.InfoSpec)
 	UpdateInfo(spec overlay.InfoSpec)
 	Close()
@@ -594,6 +596,7 @@ type Model struct {
 	reviewed    reviewedState     // semantic fingerprints for mark_reviewed
 	reload      reloadState       // pending-confirmation state and applicability for R reload
 	compact     compactState      // applicability + transient hint for compact diff mode
+	refs        refSwitchState    // runtime review-target switcher (branches, pull requests, typed refs)
 	editorState editorState       // transient hint state for source-file editor launches
 	output      outputState       // transient hint state for the O in-session output flush
 	keys        keyState          // chord-pending state and transient hint for leader-chord keybindings
@@ -729,6 +732,11 @@ type ModelConfig struct {
 	Keymap               *keymap.Keymap // custom key bindings (nil uses defaults)
 	Editor               ExternalEditor // external-editor driver (nil uses app/editor.Editor{})
 	PostFlushHook        PostFlushHook  // optional command run after an in-session output flush
+	// RefSource lists branches and pull requests and resolves them to refs for
+	// the runtime review switcher (switch_ref). Nil disables the switcher; the
+	// composition root wires it only for git diffs (not stdin, compare,
+	// all-files, or file-only review).
+	RefSource RefSource
 	// CommitLog enumerates commits in the current ref range for the info popup's
 	// commit-log section. When nil, NewModel attempts to derive the source by
 	// type-asserting the Renderer against diff.CommitLogger; if the assertion
@@ -890,6 +898,13 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		tree.ToggleUnreviewedFilter()
 	}
 
+	refSource := cfg.RefSource
+	if isNilValue(refSource) {
+		refSource = nil
+	}
+	showUntracked := cfg.ShowUntracked && cfg.LoadUntracked != nil
+	commitsApplicable := cfg.CommitsApplicable && cls != nil
+
 	return Model{
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
@@ -936,7 +951,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 			collapsed:      collapsedState{enabled: cfg.Collapsed},
 			wordDiff:       cfg.WordDiff,
 			showBlame:      cfg.ShowBlame && cfg.Blamer != nil,
-			showUntracked:  cfg.ShowUntracked && cfg.LoadUntracked != nil,
+			showUntracked:  showUntracked,
 			compact:        cfg.Compact && cfg.CompactApplicable,
 			compactContext: cfg.CompactContext,
 			pageOverlap:    max(0, cfg.PageOverlap),
@@ -944,7 +959,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		},
 		commits: commitsState{
 			source:     cls,
-			applicable: cfg.CommitsApplicable && cls != nil,
+			applicable: commitsApplicable,
 		},
 		review: reviewInfoState{
 			cfg:                    reviewCfg,
@@ -958,6 +973,18 @@ func NewModel(cfg ModelConfig) (Model, error) {
 		loadUntracked:        cfg.LoadUntracked,
 		loadUntrackedRenames: cfg.LoadUntrackedRenames,
 		activeThemeName:      cfg.ActiveThemeName,
+		refs: refSwitchState{
+			source:   refSource,
+			activeID: refIDOriginal,
+			origin: refOrigin{
+				ref:               cfg.Ref,
+				staged:            cfg.Staged,
+				showUntracked:     showUntracked,
+				commitsApplicable: commitsApplicable,
+				sourceEditor:      cfg.SourceEditor,
+				reviewCfg:         reviewCfg,
+			},
+		},
 	}, nil
 }
 
@@ -1011,6 +1038,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePostFlushFinished(msg)
 	case wheelDebounceMsg:
 		return m.handleWheelDebounce(msg)
+	case refBranchesLoadedMsg, refPullRequestsLoadedMsg, refResolvedMsg:
+		return m.handleRefSwitchMsg(msg)
 	}
 
 	// forward other messages to textinput when annotating (e.g. paste completion).
@@ -1043,6 +1072,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.output.hint = ""
 	m.compact.hint = ""
 	m.editorState.hint = ""
+	m.refs.hint = ""
 	m.keys.hint = ""
 	m.vim.hint = ""
 
@@ -1054,6 +1084,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// pending-reload intercept: y confirms, any other key cancels
 	if m.reload.pending {
 		return m.handlePendingReload(msg)
+	}
+
+	// pending review-switch intercept: y confirms dropping annotations, any other key cancels
+	if m.refs.pending != nil {
+		return m.handlePendingRefSwitch(msg)
 	}
 
 	// chord-second guard: a second key arriving while a chord is pending must
@@ -1180,6 +1215,10 @@ func (m Model) handleOverlayOpen(action keymap.Action) (tea.Model, tea.Cmd, bool
 		m.clearPendingInputState()
 		cmd := m.handleInfo()
 		return m, cmd, true
+	case keymap.ActionSwitchRef:
+		m.clearPendingInputState()
+		cmd := m.openRefSwitcher()
+		return m, cmd, true
 	default:
 		return m, nil, false
 	}
@@ -1305,6 +1344,9 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			m.cancelThemeSelect()
 		case overlay.OutcomeFileChosen:
 			model, cmd := m.jumpToFile(out.FileChoice.Path)
+			return true, model, cmd
+		case overlay.OutcomeRefChosen:
+			model, cmd := m.handleRefChoice(out.RefChoice)
 			return true, model, cmd
 		case overlay.OutcomeClosed, overlay.OutcomeNone:
 		}

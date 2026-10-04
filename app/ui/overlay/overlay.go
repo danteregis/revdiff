@@ -1,11 +1,11 @@
 // Package overlay owns all layered popup UI for revdiff — help, annotation list,
-// theme selector, and file picker overlays. It provides a Manager coordinator
+// theme selector, file picker, and review-target switcher overlays. It provides a Manager coordinator
 // that enforces mutual exclusivity (only one overlay visible at a time), routes key dispatch
 // to the active overlay, and composes the overlay on top of the base view via
 // ANSI-aware centered compositing.
 //
 // Callers supply fully populated spec structs (HelpSpec, AnnotListSpec, ThemeSelectSpec,
-// FilePickerSpec)
+// FilePickerSpec, RefPickerSpec)
 // when opening an overlay and handle side effects by switching on the returned Outcome
 // from HandleKey. The overlay package has no dependency on ui.Model, annotation store,
 // theme loading, or any filesystem operation.
@@ -33,6 +33,7 @@ const (
 	KindThemeSelect      // theme selector popup
 	KindFilePicker       // filterable file-jump popup
 	KindInfo             // unified info popup (description + session + commits)
+	KindRefPicker        // review-target switcher (branches, pull requests, typed refs)
 )
 
 // OutcomeKind describes what happened after a key press in an overlay.
@@ -46,6 +47,7 @@ const (
 	OutcomeThemeConfirmed                      // user confirmed a theme (name in Outcome.ThemeChoice)
 	OutcomeThemeCanceled                       // user canceled theme selection
 	OutcomeFileChosen                          // user picked a file (path in Outcome.FileChoice)
+	OutcomeRefChosen                           // user picked a review target (in Outcome.RefChoice)
 )
 
 // Outcome is the return value from HandleKey. Callers switch on Kind and read
@@ -55,6 +57,7 @@ type Outcome struct {
 	AnnotationTarget *AnnotationTarget
 	ThemeChoice      *ThemeChoice
 	FileChoice       *FileChoice
+	RefChoice        *RefChoice
 }
 
 // RenderCtx carries per-render parameters passed to Compose.
@@ -137,6 +140,35 @@ type FileChoice struct {
 	Path string
 }
 
+// RefPickerSpec describes the review-target switcher. Items are rendered in
+// order, grouped under a header each time Section changes; a non-empty filter
+// adds a trailing row that uses the typed text as a raw ref. Loading and
+// Notices render as muted lines below the list.
+type RefPickerSpec struct {
+	Current  string    // label of the review currently shown, rendered in the title
+	ActiveID string    // item to place the cursor on when opening
+	Items    []RefItem // selectable targets
+	Loading  bool      // true while any list is still being fetched
+	Notices  []string  // non-fatal messages, e.g. why pull requests are unavailable
+}
+
+// RefItem is one selectable review target. ID is opaque to the overlay and
+// returned in RefChoice; Label and Detail are display text (Detail muted) and
+// are both matched by the filter.
+type RefItem struct {
+	ID      string
+	Section string
+	Label   string
+	Detail  string
+}
+
+// RefChoice carries the switcher selection: the chosen item's ID, or Raw
+// holding the typed filter text when the "use typed ref" row was picked.
+type RefChoice struct {
+	ID  string
+	Raw string
+}
+
 // InfoSpec describes the unified info popup, composed of three optional
 // sections rendered top-to-bottom: an agent-supplied prose description (#130
 // — empty hides the section), invocation/session info from --description-less
@@ -191,6 +223,7 @@ type Manager struct {
 	annotLst annotListOverlay
 	themeSel themeSelectOverlay
 	filePick filePickerOverlay
+	refPick  refPickerOverlay
 	info     infoOverlay
 	// bounds is the popup rectangle on screen as of the last Compose call;
 	// used by HandleMouse to hit-test clicks and translate to popup-local coords.
@@ -251,6 +284,23 @@ func (m *Manager) OpenFilePicker(spec FilePickerSpec) {
 	m.filePick.open(spec)
 }
 
+// OpenRefPicker activates the review-target switcher.
+func (m *Manager) OpenRefPicker(spec RefPickerSpec) {
+	m.Close()
+	m.kind = KindRefPicker
+	m.refPick.open(spec)
+}
+
+// UpdateRefPicker replaces the open switcher's spec (e.g. when the async
+// branch or pull-request list lands), keeping the typed filter and, when still
+// listed, the item under the cursor. No-op when the switcher is not active.
+func (m *Manager) UpdateRefPicker(spec RefPickerSpec) {
+	if m.kind != KindRefPicker {
+		return
+	}
+	m.refPick.update(spec)
+}
+
 // OpenInfo activates the unified info popup with the given spec.
 func (m *Manager) OpenInfo(spec InfoSpec) {
 	m.Close()
@@ -287,6 +337,8 @@ func (m *Manager) HandleKey(msg tea.KeyMsg, action keymap.Action) Outcome {
 		out = m.themeSel.handleKey(msg, action)
 	case KindFilePicker:
 		out = m.filePick.handleKey(msg, action)
+	case KindRefPicker:
+		out = m.refPick.handleKey(msg, action)
 	case KindInfo:
 		out = m.info.handleKey(msg, action)
 	default:
@@ -294,7 +346,7 @@ func (m *Manager) HandleKey(msg tea.KeyMsg, action keymap.Action) Outcome {
 	}
 
 	switch out.Kind {
-	case OutcomeClosed, OutcomeAnnotationChosen, OutcomeThemeConfirmed, OutcomeThemeCanceled, OutcomeFileChosen:
+	case OutcomeClosed, OutcomeAnnotationChosen, OutcomeThemeConfirmed, OutcomeThemeCanceled, OutcomeFileChosen, OutcomeRefChosen:
 		m.Close()
 	case OutcomeNone, OutcomeThemePreview: // no state change
 	}
@@ -335,6 +387,8 @@ func (m *Manager) HandleMouse(msg tea.MouseMsg) Outcome {
 		out = m.themeSel.handleMouse(msg)
 	case KindFilePicker:
 		out = m.filePick.handleMouse(msg)
+	case KindRefPicker:
+		out = m.refPick.handleMouse(msg)
 	case KindInfo:
 		out = m.info.handleMouse(msg)
 	default: // KindNone handled by the early return above
@@ -342,7 +396,7 @@ func (m *Manager) HandleMouse(msg tea.MouseMsg) Outcome {
 	}
 
 	switch out.Kind {
-	case OutcomeClosed, OutcomeAnnotationChosen, OutcomeThemeConfirmed, OutcomeThemeCanceled, OutcomeFileChosen:
+	case OutcomeClosed, OutcomeAnnotationChosen, OutcomeThemeConfirmed, OutcomeThemeCanceled, OutcomeFileChosen, OutcomeRefChosen:
 		m.Close()
 	case OutcomeNone, OutcomeThemePreview: // no state change
 	}
@@ -365,6 +419,8 @@ func (m *Manager) Compose(base string, ctx RenderCtx) string {
 		fg = m.themeSel.render(ctx, m)
 	case KindFilePicker:
 		fg = m.filePick.render(ctx, m)
+	case KindRefPicker:
+		fg = m.refPick.render(ctx, m)
 	case KindInfo:
 		fg = m.info.render(ctx, m)
 	}

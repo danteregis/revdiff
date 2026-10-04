@@ -197,22 +197,32 @@ func (f *filePickerOverlay) handleKey(msg tea.KeyMsg, action keymap.Action) Outc
 // single-rune actions such as the default j/k navigation bindings. Modified
 // runes and non-printable keys remain available for configured actions.
 func (f *filePickerOverlay) appendPrintableRunes(msg tea.KeyMsg) bool {
+	text, ok := printableKeyText(msg)
+	if !ok {
+		return false
+	}
+	f.filter += text
+	f.applyFilter()
+	return true
+}
+
+// printableKeyText returns the text an unmodified printable key (or space)
+// types into a filter field; ok is false for modified runes and non-printable
+// keys, which stay available for configured actions. Shared by the file
+// picker and the review switcher.
+func printableKeyText(msg tea.KeyMsg) (string, bool) {
 	if msg.Type == tea.KeySpace && !msg.Alt {
-		f.filter += " "
-		f.applyFilter()
-		return true
+		return " ", true
 	}
 	if msg.Type != tea.KeyRunes || msg.Alt || len(msg.Runes) == 0 {
-		return false
+		return "", false
 	}
 	for _, r := range msg.Runes {
 		if !unicode.IsPrint(r) {
-			return false
+			return "", false
 		}
 	}
-	f.filter += string(msg.Runes)
-	f.applyFilter()
-	return true
+	return string(msg.Runes), true
 }
 
 func (f *filePickerOverlay) chooseCurrent() Outcome {
