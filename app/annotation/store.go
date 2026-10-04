@@ -15,7 +15,8 @@ type Annotation struct {
 	Line    int    // line number in the diff
 	EndLine int    // end line of hunk range, 0 means no range
 	Type    string // change type: "+", "-", or " "
-	Comment string // user comment text
+	Comment string // user comment text; may be empty when Kind is set
+	Kind    string // optional label from Kinds() (e.g. "praise"); empty for a plain comment
 }
 
 // Store holds annotations in memory, keyed by filename.
@@ -35,6 +36,7 @@ func (s *Store) Add(a Annotation) {
 	if i, ok := s.find(a.File, a.Line, a.Type); ok {
 		existing[i].Comment = a.Comment
 		existing[i].EndLine = a.EndLine
+		existing[i].Kind = a.Kind
 		return
 	}
 	s.annotations[a.File] = append(existing, a)
@@ -141,6 +143,10 @@ func (s *Store) Load(r io.Reader) error {
 // (markdown renderers treat leading whitespace before a heading marker as
 // paragraph text) and preserves the original text when whitespace is trimmed
 // per line. Other markdown heading forms like "### subheader" are not escaped.
+//
+// A typed annotation carries its Kind as a Conventional Comments label at the
+// start of the body ("kind: text", or the bare "kind" for an empty comment);
+// the record header grammar is unchanged and untyped bodies are emitted as-is.
 func (s *Store) FormatOutput() string {
 	if len(s.annotations) == 0 {
 		return ""
@@ -157,7 +163,7 @@ func (s *Store) FormatOutput() string {
 				buf.WriteString("\n")
 			}
 			first = false
-			body := s.escapeHeaderLines(a.Comment)
+			body := s.escapeHeaderLines(s.labelBody(a.Kind, a.Comment))
 			switch {
 			case a.Line == 0:
 				fmt.Fprintf(&buf, "## %s (file-level)\n%s\n", a.File, body)

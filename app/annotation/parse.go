@@ -24,6 +24,10 @@ var headerRe = regexp.MustCompile(`^## (.+?)(?::(\d+)(?:-(\d+))?)? \((file-level
 // returned as separate records; callers feed them through Store.Add to apply
 // last-write-wins semantics.
 //
+// A first body line carrying a known kind label ("kind: text" or the bare
+// "kind") sets Annotation.Kind and is stripped from Comment; unknown labels
+// stay in the comment text.
+//
 // A line beginning with "## " that does NOT match the header grammar is folded
 // into the body of the current record so hand-authored or LLM-generated bodies
 // can mention "## something" without escaping. If such a line appears before
@@ -107,7 +111,7 @@ func (p *parser) flush() {
 	if n := len(p.body); n > 0 && p.body[n-1] == "" {
 		p.body = p.body[:n-1]
 	}
-	p.current.Comment = strings.Join(p.body, "\n")
+	p.current.Kind, p.current.Comment = p.splitLabel(strings.Join(p.body, "\n"))
 	p.out = append(p.out, *p.current)
 	p.current = nil
 	p.body = nil
