@@ -549,6 +549,10 @@ type annotationState struct {
 	// from this field, and Enter with empty input preserves the existing content
 	// unchanged. Cleared on every annotation-mode exit path.
 	existingMultiline string
+	// kind is the annotation kind selected in the open input ("" = plain
+	// comment), cycled by Tab/Shift+Tab and pre-selected from the annotation
+	// being edited. Cleared on every annotation-mode exit path.
+	kind string
 	// rowCache memoizes annotationVisualRows results keyed by (prefix, body, width).
 	// invalidated by handleFileLoaded (memory hygiene — the cache is content-keyed
 	// so cross-file collisions are correct, but a fresh file has a fresh working

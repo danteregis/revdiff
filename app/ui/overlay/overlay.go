@@ -93,10 +93,12 @@ type AnnotListSpec struct {
 }
 
 // AnnotationItem is one entry in the annotation list popup.
-// embeds AnnotationTarget for the jump destination; Comment is the display text.
+// embeds AnnotationTarget for the jump destination; Comment is the display text
+// and Kind the optional annotation kind label, shown as a "[kind]" badge.
 type AnnotationItem struct {
 	AnnotationTarget
 	Comment string
+	Kind    string
 }
 
 // AnnotationTarget identifies the jump destination for an annotation list selection.

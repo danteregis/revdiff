@@ -3449,3 +3449,266 @@ func TestModel_AnnotationInputCursorIsStatic(t *testing.T) {
 	assert.Equal(t, bubblecursor.CursorStatic, ti.Cursor.Mode(), "cursor must not blink")
 	assert.Nil(t, cmd, "focus must not schedule a blink command")
 }
+
+// kindTestModel returns a diff-focused model on a.go with a context line, an
+// added line, and a divider, cursor on the added line.
+func kindTestModel() Model {
+	lines := []diff.DiffLine{
+		{NewNum: 1, Content: "line1", ChangeType: diff.ChangeContext},
+		{NewNum: 2, Content: "added", ChangeType: diff.ChangeAdd},
+		{Content: "...", ChangeType: diff.ChangeDivider},
+	}
+	m := testModel([]string{"a.go"}, map[string][]diff.DiffLine{"a.go": lines})
+	m.tree = testNewFileTree([]string{"a.go"})
+	m.layout.focus = paneDiff
+	m.file.name = "a.go"
+	m.file.lines = lines
+	m.nav.diffCursor = 1
+	return m
+}
+
+func sendKey(t *testing.T, m Model, msg tea.KeyMsg) Model {
+	t.Helper()
+	result, _ := m.Update(msg)
+	return result.(Model)
+}
+
+func TestModel_AnnotationKindCycle(t *testing.T) {
+	m := kindTestModel()
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	require.True(t, m.annot.annotating)
+	assert.Empty(t, m.annot.kind, "new annotation starts untyped")
+	plainWidth := m.annot.input.Width
+
+	got := make([]string, 0, len(annotation.Kinds())+1)
+	for range len(annotation.Kinds()) + 1 {
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
+		got = append(got, m.annot.kind)
+	}
+	assert.Equal(t, []string{"bug", "suggestion", "question", "nitpick", "praise", ""}, got, "tab cycles forward and wraps to plain")
+	assert.True(t, m.annot.annotating, "tab must not leave annotation mode")
+	assert.Equal(t, plainWidth, m.annot.input.Width, "plain kind restores the full input width")
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	assert.Equal(t, "praise", m.annot.kind, "shift+tab from plain wraps to the last kind")
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	assert.Equal(t, "nitpick", m.annot.kind)
+
+	assert.Equal(t, plainWidth-len("[nitpick] "), m.annot.input.Width, "badge width is reserved from the input")
+	assert.Contains(t, m.renderDiff(), "[nitpick]", "input row shows the selected kind badge")
+}
+
+func TestModel_AnnotationKindSavedWithText(t *testing.T) {
+	m := kindTestModel()
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("off by one")})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	anns := m.store.Get("a.go")
+	require.Len(t, anns, 1)
+	assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, Type: "+", Comment: "off by one", Kind: "bug"}, anns[0])
+	assert.False(t, m.annot.annotating)
+	assert.Empty(t, m.annot.kind, "kind is cleared on save")
+	assert.Contains(t, m.renderDiff(), "[bug] off by one")
+	assert.Equal(t, "## a.go:2 (+)\nbug: off by one\n", m.store.FormatOutput())
+}
+
+func TestModel_AnnotationKindEnterEmptySavesKindOnly(t *testing.T) {
+	m := kindTestModel()
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyShiftTab}) // praise
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	anns := m.store.Get("a.go")
+	require.Len(t, anns, 1)
+	assert.Equal(t, "praise", anns[0].Kind)
+	assert.Empty(t, anns[0].Comment)
+	assert.False(t, m.annot.annotating)
+	assert.True(t, m.annotatedFiles()["a.go"])
+
+	rendered := m.renderDiff()
+	assert.Contains(t, rendered, "[praise]")
+	assert.NotContains(t, rendered, "[praise] ", "kind-only annotation paints the bare badge")
+	assert.Equal(t, 1, m.wrappedAnnotationLineCount(m.annotationKey(2, "+")), "height matches the single painted row")
+}
+
+func TestModel_AnnotationKindPreselectedOnEdit(t *testing.T) {
+	m := kindTestModel()
+	m.store.Add(annotation.Annotation{File: "a.go", Line: 2, Type: "+", Comment: "why?", Kind: "question"})
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	assert.Equal(t, "question", m.annot.kind)
+	assert.Equal(t, "why?", m.annot.input.Value())
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab}) // nitpick
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	anns := m.store.Get("a.go")
+	require.Len(t, anns, 1)
+	assert.Equal(t, "nitpick", anns[0].Kind)
+	assert.Equal(t, "why?", anns[0].Comment)
+}
+
+func TestModel_AnnotationKindRetagsExistingMultiline(t *testing.T) {
+	m := kindTestModel()
+	m.store.Add(annotation.Annotation{File: "a.go", Line: 2, EndLine: 9, Type: "+", Comment: "first\nsecond"})
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	require.Equal(t, "first\nsecond", m.annot.existingMultiline)
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab}) // bug
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	anns := m.store.Get("a.go")
+	require.Len(t, anns, 1)
+	assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, EndLine: 9, Type: "+", Comment: "first\nsecond", Kind: "bug"}, anns[0],
+		"empty enter keeps the multi-line comment and range, updating only the kind")
+	assert.False(t, m.annot.annotating)
+	assert.Empty(t, m.annot.existingMultiline)
+}
+
+func TestModel_AnnotationKindEmptyEnterWithoutKindCancels(t *testing.T) {
+	m := kindTestModel()
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyShiftTab}) // back to plain
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	assert.False(t, m.annot.annotating)
+	assert.Zero(t, m.store.Count())
+}
+
+func TestModel_AnnotationKindEscClearsKind(t *testing.T) {
+	m := kindTestModel()
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	assert.False(t, m.annot.annotating)
+	assert.Empty(t, m.annot.kind)
+	assert.Zero(t, m.store.Count())
+}
+
+func TestModel_FileAnnotationKind(t *testing.T) {
+	m := kindTestModel()
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	require.True(t, m.annot.fileAnnotating)
+	plainWidth := m.annot.input.Width
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab}) // suggestion
+	assert.Equal(t, plainWidth-len("[suggestion] "), m.annot.input.Width)
+	assert.Contains(t, m.renderDiff(), "file: [suggestion] ")
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	anns := m.store.Get("a.go")
+	require.Len(t, anns, 1)
+	assert.Equal(t, annotation.Annotation{File: "a.go", Kind: "suggestion"}, anns[0])
+	assert.Contains(t, m.renderDiff(), "file: [suggestion]")
+
+	// re-editing pre-selects the stored kind
+	m.nav.diffCursor = -1
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	require.True(t, m.annot.fileAnnotating)
+	assert.Equal(t, "suggestion", m.annot.kind)
+}
+
+func TestModel_QuickPraise(t *testing.T) {
+	t.Run("adds a comment-less praise", func(t *testing.T) {
+		m := kindTestModel()
+		m.layout.viewport = viewport.New(100, 10)
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+		assert.False(t, m.annot.annotating, "quick praise opens no input")
+		anns := m.store.Get("a.go")
+		require.Len(t, anns, 1)
+		assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, Type: "+", Kind: "praise"}, anns[0])
+		assert.True(t, m.annotatedFiles()["a.go"])
+		assert.Contains(t, m.layout.viewport.View(), "[praise]", "viewport is refreshed")
+	})
+
+	t.Run("retags an existing annotation keeping its comment", func(t *testing.T) {
+		m := kindTestModel()
+		m.store.Add(annotation.Annotation{File: "a.go", Line: 2, EndLine: 4, Type: "+", Comment: "nice", Kind: "bug"})
+		require.Contains(t, m.renderDiff(), "[bug] nice", "warm the render caches with the old kind")
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+		anns := m.store.Get("a.go")
+		require.Len(t, anns, 1)
+		assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, EndLine: 4, Type: "+", Comment: "nice", Kind: "praise"}, anns[0])
+		after := m.renderDiff()
+		assert.Contains(t, after, "[praise] nice")
+		assert.NotContains(t, after, "[bug]", "cached rows must not keep the old kind")
+	})
+
+	t.Run("file-level annotation line", func(t *testing.T) {
+		m := kindTestModel()
+		m.store.Add(annotation.Annotation{File: "a.go", Comment: "overall"})
+		m.nav.diffCursor = -1
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+		anns := m.store.Get("a.go")
+		require.Len(t, anns, 1)
+		assert.Equal(t, "praise", anns[0].Kind)
+		assert.Equal(t, "overall", anns[0].Comment)
+	})
+
+	t.Run("divider ignored", func(t *testing.T) {
+		m := kindTestModel()
+		m.nav.diffCursor = 2
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+		assert.Zero(t, m.store.Count())
+	})
+
+	t.Run("collapsed hidden removed line ignored", func(t *testing.T) {
+		m := testModel([]string{"a.go"}, nil)
+		m.layout.focus = paneDiff
+		m.file.name = "a.go"
+		m.file.lines = []diff.DiffLine{
+			{OldNum: 1, NewNum: 1, Content: "ctx", ChangeType: diff.ChangeContext},
+			{OldNum: 2, Content: "removed", ChangeType: diff.ChangeRemove},
+			{NewNum: 2, Content: "added", ChangeType: diff.ChangeAdd},
+		}
+		m.modes.collapsed.enabled = true
+		m.modes.collapsed.expandedHunks = map[int]bool{}
+		m.nav.diffCursor = 1
+		m.quickPraise()
+		assert.Zero(t, m.store.Count())
+	})
+
+	t.Run("tree pane is a no-op", func(t *testing.T) {
+		m := kindTestModel()
+		m.layout.focus = paneTree
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+		assert.Zero(t, m.store.Count())
+	})
+
+	t.Run("plus inside annotation input is text", func(t *testing.T) {
+		m := kindTestModel()
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
+		assert.Equal(t, "+", m.annot.input.Value())
+		assert.Zero(t, m.store.Count())
+	})
+}
+
+func TestModel_AnnotationDisplayBody(t *testing.T) {
+	m := testModel(nil, nil)
+	assert.Equal(t, "text", m.annotationDisplayBody(annotation.Annotation{Comment: "text"}))
+	assert.Empty(t, m.annotationDisplayBody(annotation.Annotation{}))
+	assert.Equal(t, "[praise]", m.annotationDisplayBody(annotation.Annotation{Kind: "praise"}))
+	assert.Equal(t, "[bug] a\nb", m.annotationDisplayBody(annotation.Annotation{Kind: "bug", Comment: "a\nb"}))
+}
+
+func TestModel_EditorFinishedKindOnlySaves(t *testing.T) {
+	m := kindTestModel()
+	m.startAnnotation()
+	msg := editorFinishedMsg{content: "", kind: "praise", fileName: "a.go", line: 2, changeType: "+"}
+	result, _ := m.Update(msg)
+	model := result.(Model)
+	anns := model.store.Get("a.go")
+	require.Len(t, anns, 1, "empty editor result with a kind saves a kind-only annotation")
+	assert.Equal(t, "praise", anns[0].Kind)
+	assert.Empty(t, anns[0].Comment)
+
+	msg = editorFinishedMsg{content: "fix\nthis", kind: "bug", fileName: "a.go", line: 2, changeType: "+"}
+	result, _ = model.Update(msg)
+	model = result.(Model)
+	anns = model.store.Get("a.go")
+	require.Len(t, anns, 1)
+	assert.Equal(t, "bug", anns[0].Kind)
+	assert.Equal(t, "fix\nthis", anns[0].Comment)
+}

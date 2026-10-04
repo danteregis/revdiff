@@ -93,11 +93,12 @@ func (m *Model) startAnnotation() tea.Cmd {
 	// via the placeholder so the editor key can seed the editor from it and
 	// Enter with empty input preserves it unchanged.
 	lineNum := m.diffLineNum(dl)
-	var preFill, existingMultiline string
+	var preFill, existingMultiline, kind string
 	for _, a := range m.store.Get(m.file.name) {
 		if a.Line != lineNum || a.Type != string(dl.ChangeType) {
 			continue
 		}
+		kind = a.Kind
 		if strings.Contains(a.Comment, "\n") {
 			existingMultiline = a.Comment
 			placeholder = m.multiLinePlaceholder()
@@ -107,14 +108,15 @@ func (m *Model) startAnnotation() tea.Cmd {
 		break
 	}
 
-	ti, cmd := m.newAnnotationInput(placeholder, 3+lipgloss.Width(m.annotPrefix())) // cursor col + annotation prefix + border margin
+	m.annot.fileAnnotating = false
+	m.annot.kind = kind
+	ti, cmd := m.newAnnotationInput(placeholder, m.annotInputPrefixWidth())
 	if preFill != "" {
 		ti.SetValue(preFill)
 	}
 
 	m.annot.input = ti
 	m.annot.annotating = true
-	m.annot.fileAnnotating = false
 	m.annot.existingMultiline = existingMultiline
 	m.ensureLineAnnotationInputVisible()
 	return cmd
@@ -158,11 +160,12 @@ func (m *Model) startFileAnnotation() tea.Cmd {
 	// comments bypass ti.SetValue (textinput sanitizer flattens \n to space);
 	// instead stash in existingMultiline so the editor key can seed and Enter
 	// with empty input preserves it unchanged.
-	var preFill, existingMultiline string
+	var preFill, existingMultiline, kind string
 	for _, a := range m.store.Get(m.file.name) {
 		if a.Line != 0 {
 			continue
 		}
+		kind = a.Kind
 		if strings.Contains(a.Comment, "\n") {
 			existingMultiline = a.Comment
 			placeholder = m.multiLinePlaceholder()
@@ -172,14 +175,15 @@ func (m *Model) startFileAnnotation() tea.Cmd {
 		break
 	}
 
-	ti, cmd := m.newAnnotationInput(placeholder, 3+lipgloss.Width(m.annotFilePrefix())) // cursor col + file annotation prefix + border margin
+	m.annot.fileAnnotating = true
+	m.annot.kind = kind
+	ti, cmd := m.newAnnotationInput(placeholder, m.annotInputPrefixWidth())
 	if preFill != "" {
 		ti.SetValue(preFill)
 	}
 
 	m.annot.input = ti
 	m.annot.annotating = true
-	m.annot.fileAnnotating = true
 	m.annot.existingMultiline = existingMultiline
 	m.nav.diffCursor = -1 // position cursor on the file annotation line
 	m.layout.viewport.GotoTop()
@@ -188,24 +192,45 @@ func (m *Model) startFileAnnotation() tea.Cmd {
 
 // saveAnnotation saves the current text input as an annotation on the cursor line.
 // Thin wrapper around saveComment that reads model state for the current target.
+//
+// Empty input: an existing multi-line comment is preserved (only its kind is
+// updated), a selected kind saves a kind-only annotation, and with neither the
+// input is canceled.
 func (m *Model) saveAnnotation() {
 	text := m.annot.input.Value()
-	if text == "" {
+	fileLevel := m.annot.fileAnnotating
+	var line int
+	var changeType string
+	if !fileLevel {
+		dl, ok := m.cursorDiffLine()
+		if !ok {
+			m.cancelAnnotation()
+			return
+		}
+		line, changeType = m.diffLineNum(dl), string(dl.ChangeType)
+	}
+
+	if text == "" && m.annot.existingMultiline != "" {
+		m.retagAnnotation(m.file.name, line, changeType, m.annot.kind)
 		m.cancelAnnotation()
 		return
 	}
+	m.saveComment(text, m.annot.kind, m.file.name, fileLevel, line, changeType)
+}
 
-	if m.annot.fileAnnotating {
-		m.saveComment(text, m.file.name, true, 0, "")
-		return
+// retagAnnotation sets the kind of the existing annotation at the target,
+// keeping its comment and range. Returns false when no annotation exists there.
+// File-level targets use line 0 and an empty changeType.
+func (m *Model) retagAnnotation(fileName string, line int, changeType, kind string) bool {
+	for _, a := range m.store.Get(fileName) {
+		if a.Line != line || a.Type != changeType {
+			continue
+		}
+		a.Kind = kind
+		m.store.Add(a)
+		return true
 	}
-
-	dl, ok := m.cursorDiffLine()
-	if !ok {
-		m.cancelAnnotation()
-		return
-	}
-	m.saveComment(text, m.file.name, false, m.diffLineNum(dl), string(dl.ChangeType))
+	return false
 }
 
 // saveComment persists the annotation text for the explicitly provided target.
@@ -216,17 +241,20 @@ func (m *Model) saveAnnotation() {
 // pair so cursor movement during an external editor session does not skew the
 // range; when fileName matches the currently loaded file, m.file.lines is
 // scanned, otherwise EndLine expansion is skipped (no hunk context available).
-func (m *Model) saveComment(text, fileName string, fileLevel bool, line int, changeType string) {
-	if text == "" {
+// An empty text is saved only when kind is set (a kind-only annotation such as
+// a bare praise); empty text with no kind cancels.
+func (m *Model) saveComment(text, kind, fileName string, fileLevel bool, line int, changeType string) {
+	if text == "" && kind == "" {
 		m.cancelAnnotation()
 		return
 	}
 
 	if fileLevel {
-		m.store.Add(annotation.Annotation{File: fileName, Line: 0, Type: "", Comment: text})
+		m.store.Add(annotation.Annotation{File: fileName, Line: 0, Type: "", Comment: text, Kind: kind})
 		m.annot.annotating = false
 		m.annot.fileAnnotating = false
 		m.annot.existingMultiline = ""
+		m.annot.kind = ""
 		m.nav.diffCursor = -1 // position cursor on the file annotation line
 		m.tree.RefreshFilter(m.annotatedFiles())
 		m.layout.viewport.SetContent(m.renderDiff())
@@ -234,7 +262,7 @@ func (m *Model) saveComment(text, fileName string, fileLevel bool, line int, cha
 		return
 	}
 
-	a := annotation.Annotation{File: fileName, Line: line, Type: changeType, Comment: text}
+	a := annotation.Annotation{File: fileName, Line: line, Type: changeType, Comment: text, Kind: kind}
 	if hunkKeywordRe.MatchString(text) && fileName == m.file.name {
 		// re-derive the diff-line index from (line, changeType) so hunk-end
 		// detection survives cursor drift during an external editor session.
@@ -257,9 +285,37 @@ func (m *Model) saveComment(text, fileName string, fileLevel bool, line int, cha
 	m.annot.annotating = false
 	m.annot.fileAnnotating = false // defensive hygiene: parity with file-level branch
 	m.annot.existingMultiline = ""
+	m.annot.kind = ""
 	m.tree.RefreshFilter(m.annotatedFiles())
 	// sync scroll so a newly added multi-row annotation stays visible when the
 	// cursor sits near the bottom of the viewport.
+	m.syncViewportToCursor()
+}
+
+// quickPraise tags the cursor line, or the file-level annotation line, as
+// praise without opening the input. An existing annotation keeps its comment
+// and range and only gets the praise kind; otherwise a comment-less praise
+// annotation is added. Line guards match startAnnotation, so dividers,
+// collapsed-hidden lines and delete-only placeholders are ignored.
+func (m *Model) quickPraise() {
+	if m.cursorOnFileAnnotationLine() {
+		m.retagAnnotation(m.file.name, 0, "", annotation.KindPraise)
+		m.syncViewportToCursor()
+		return
+	}
+	dl, ok := m.cursorDiffLine()
+	if !ok || dl.ChangeType == diff.ChangeDivider {
+		return
+	}
+	hunks := m.findHunks()
+	if m.isCollapsedHidden(m.nav.diffCursor, hunks) || m.isDeleteOnlyPlaceholder(m.nav.diffCursor, hunks) {
+		return
+	}
+	line, changeType := m.diffLineNum(dl), string(dl.ChangeType)
+	if !m.retagAnnotation(m.file.name, line, changeType, annotation.KindPraise) {
+		m.store.Add(annotation.Annotation{File: m.file.name, Line: line, Type: changeType, Kind: annotation.KindPraise})
+		m.tree.RefreshFilter(m.annotatedFiles())
+	}
 	m.syncViewportToCursor()
 }
 
@@ -268,6 +324,7 @@ func (m *Model) cancelAnnotation() {
 	m.annot.annotating = false
 	m.annot.fileAnnotating = false
 	m.annot.existingMultiline = ""
+	m.annot.kind = ""
 	m.layout.viewport.SetContent(m.renderDiff())
 }
 
@@ -346,6 +403,51 @@ func (m Model) multiLinePlaceholder() string {
 	return "[existing multi-line]"
 }
 
+// kindBadge returns the "[kind] " badge painted before annotation text, or ""
+// for a plain comment.
+func (m Model) kindBadge(kind string) string {
+	if kind == "" {
+		return ""
+	}
+	return "[" + kind + "] "
+}
+
+// annotationDisplayBody returns the text painted for a saved annotation: the
+// kind badge followed by the comment. Folding the badge into the body keeps it
+// inside annotationVisualRows' cache key and the diff render cache's comment flag.
+func (m Model) annotationDisplayBody(a annotation.Annotation) string {
+	if a.Comment == "" {
+		return strings.TrimSuffix(m.kindBadge(a.Kind), " ")
+	}
+	return m.kindBadge(a.Kind) + a.Comment
+}
+
+// annotInputPrefix returns the prefix painted before the live annotation input:
+// the line or file-level marker plus the selected kind badge.
+func (m Model) annotInputPrefix() string {
+	prefix := m.annotPrefix()
+	if m.annot.fileAnnotating {
+		prefix = m.annotFilePrefix()
+	}
+	return prefix + m.kindBadge(m.annot.kind)
+}
+
+// annotInputPrefixWidth is the width reserved before the textinput:
+// cursor col + annotation prefix (with kind badge) + border margin.
+func (m Model) annotInputPrefixWidth() int {
+	return 3 + lipgloss.Width(m.annotInputPrefix())
+}
+
+// cycleAnnotationKind moves the selected kind of the open annotation input by
+// step through "" (plain) followed by annotation.Kinds(), wrapping at both ends,
+// and resizes the textinput so the badge does not push it past the pane edge.
+func (m *Model) cycleAnnotationKind(step int) {
+	order := append([]string{""}, annotation.Kinds()...)
+	i := max(slices.Index(order, m.annot.kind), 0)
+	m.annot.kind = order[((i+step)%len(order)+len(order))%len(order)]
+	m.annot.input.Width = max(10, m.diffContentWidth()-m.annotInputPrefixWidth())
+}
+
 // handleAnnotateKey handles key messages during annotation input mode.
 func (m Model) handleAnnotateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
@@ -354,6 +456,14 @@ func (m Model) handleAnnotateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyEsc:
 		m.cancelAnnotation()
+		return m, nil
+	case tea.KeyTab, tea.KeyShiftTab:
+		step := 1
+		if msg.Type == tea.KeyShiftTab {
+			step = -1
+		}
+		m.cycleAnnotationKind(step)
+		m.layout.viewport.SetContent(m.renderDiff())
 		return m, nil
 	default:
 		if m.keymap.Resolve(msg.String()) == keymap.ActionOpenEditor {
@@ -439,10 +549,10 @@ type annotCacheKey struct {
 func (m Model) annotationPrefixBody(key string) (prefix, body string) {
 	for _, a := range m.store.Get(m.file.name) {
 		if key == annotKeyFile && a.Line == 0 {
-			return m.annotFilePrefix(), a.Comment
+			return m.annotFilePrefix(), m.annotationDisplayBody(a)
 		}
 		if key != annotKeyFile && m.annotationKey(a.Line, a.Type) == key {
-			return m.annotPrefix(), a.Comment
+			return m.annotPrefix(), m.annotationDisplayBody(a)
 		}
 	}
 	return "", ""

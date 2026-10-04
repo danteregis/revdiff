@@ -664,3 +664,18 @@ func TestAnnotListOverlay_OpenResetsState(t *testing.T) {
 	require.Len(t, mgr.annotLst.items, 1)
 	assert.Equal(t, "b.go", mgr.annotLst.items[0].File)
 }
+
+func TestAnnotListOverlay_FormatItemKind(t *testing.T) {
+	a := &annotListOverlay{}
+	resolver := style.PlainResolver()
+
+	item := annotItem("handler.go", 43, "+", "off by one")
+	item.Kind = "bug"
+	assert.Contains(t, a.formatItem(item, 60, false, resolver), "  [bug] off by one")
+
+	praise := annotItem("handler.go", 44, "+", "")
+	praise.Kind = "praise"
+	result := a.formatItem(praise, 60, false, resolver)
+	assert.Contains(t, result, "  [praise]", "kind-only item still shows its badge")
+	assert.NotContains(t, result, "[praise] ")
+}

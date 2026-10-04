@@ -75,6 +75,7 @@ const (
 	ActionOpenEditor             Action = "open_editor"
 	ActionOpenFileInEditor       Action = "open_file_in_editor"
 	ActionFlushOutput            Action = "flush_output"
+	ActionQuickPraise            Action = "quick_praise"
 )
 
 // SectionPane is the help section name for pane-related keybindings.
@@ -104,6 +105,7 @@ var validActions = map[Action]bool{
 	ActionOpenEditor:       true,
 	ActionOpenFileInEditor: true,
 	ActionFlushOutput:      true,
+	ActionQuickPraise:      true,
 }
 
 // deprecatedActionAliases maps obsolete action names parsed from user
@@ -237,6 +239,7 @@ func defaultDescriptions() []HelpEntry {
 		{ActionNextAnnotation, "next annotation (across files)", "Annotations"},
 		{ActionPrevAnnotation, "previous annotation (across files)", "Annotations"},
 		{ActionFlushOutput, "flush annotations to output file", "Annotations"},
+		{ActionQuickPraise, "praise line (no comment needed)", "Annotations"},
 
 		// view toggles
 		{ActionToggleCollapsed, "toggle collapsed view", "View"},
@@ -300,6 +303,7 @@ func defaultBindings() map[string]Action {
 		"}":      ActionNextAnnotation,
 		"{":      ActionPrevAnnotation,
 		"O":      ActionFlushOutput,
+		"+":      ActionQuickPraise,
 		"v":      ActionToggleCollapsed,
 		"C":      ActionToggleCompact,
 		"w":      ActionToggleWrap,

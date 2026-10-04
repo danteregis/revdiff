@@ -31,6 +31,7 @@ func (m Model) buildAnnotListSpec() overlay.AnnotListSpec {
 		items[i] = overlay.AnnotationItem{
 			AnnotationTarget: overlay.AnnotationTarget{File: a.File, ChangeType: a.Type, Line: a.Line},
 			Comment:          a.Comment,
+			Kind:             a.Kind,
 		}
 	}
 	return overlay.AnnotListSpec{Items: items}

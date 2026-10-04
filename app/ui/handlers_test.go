@@ -1186,3 +1186,20 @@ func TestModel_HelpOverlayNeverExceedsTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildHelpSpec_AnnotationKindEntries(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+
+	spec := m.buildHelpSpec()
+	var keys []string
+	for _, sec := range spec.Sections {
+		if sec.Title != "Annotations" {
+			continue
+		}
+		for _, e := range sec.Entries {
+			keys = append(keys, e.Keys)
+		}
+	}
+	assert.Contains(t, keys, "Tab / Shift+Tab", "Annotations section must list kind cycling")
+	assert.Contains(t, keys, "+", "Annotations section must list quick praise")
+}

@@ -363,3 +363,13 @@ func TestModel_PositionOnAnnotation_DeleteOnlyHunk(t *testing.T) {
 	assert.True(t, m.modes.collapsed.expandedHunks[hunkStart], "delete-only hunk should be expanded after jump")
 	assert.False(t, m.isDeleteOnlyPlaceholder(m.nav.diffCursor, hunks), "line should not be a placeholder after expansion")
 }
+
+func TestModel_BuildAnnotListSpecCarriesKind(t *testing.T) {
+	m := testModel([]string{"a.go"}, nil)
+	m.store.Add(annotation.Annotation{File: "a.go", Line: 5, Type: "+", Kind: "praise"})
+
+	spec := m.buildAnnotListSpec()
+	require.Len(t, spec.Items, 1)
+	assert.Equal(t, "praise", spec.Items[0].Kind)
+	assert.Empty(t, spec.Items[0].Comment)
+}

@@ -140,10 +140,13 @@ across files by concern to keep files under ~500 lines:
 - **`scrollbar.go`** — vertical scrollbar thumb post-processing on rendered diff/tree/TOC panes
   (replaces right-border `│` with `┃` on rows mapped to the visible viewport portion)
 - **`collapsed.go`** — collapsed diff mode: hide removes, show modified markers
-- **`annotate.go`** — annotation input lifecycle (start, save, cancel, delete) and the visual-row
+- **`annotate.go`** — annotation input lifecycle (start, save, cancel, delete), annotation kinds
+  (Tab/Shift+Tab cycling in the input, `quickPraise` for the `+` key) and the visual-row
   chokepoint: `annotationVisualRows` is the single source of truth for "how many rows + what content
   does this annotation paint as." Memoized on `annot.rowCache`, invalidated by `handleFileLoaded`,
-  `applyTheme`, and `cancelThemeSelect`
+  `applyTheme`, and `cancelThemeSelect`. A kind is painted as a `[kind]` badge folded into the body
+  by `annotationDisplayBody`, so it is covered by both the row-cache key and the diff render cache's
+  per-line comment flag
 - **`annotlist.go`** — annotation list spec building, cross-file jump logic
   (`jumpToAnnotationTarget` for the `@` popup, `tryJumpToAnnotationTarget` returning a jumped-bool
   for the `}`/`{` walker)
@@ -187,7 +190,7 @@ Each source file has a matching `_test.go`.
 - **`searchState` (`m.search`)** — search lifecycle: `active`, `term`, `matches`, `cursor`, `input`,
   `matchSet`, `history`, `historyIdx`
 - **`annotationState` (`m.annot`)** — annotation input lifecycle and visual-row cache: `annotating`,
-  `fileAnnotating`, `cursorOnAnnotation`, `input`, `rowCache`
+  `fileAnnotating`, `cursorOnAnnotation`, `input`, `existingMultiline`, `kind`, `rowCache`
 - **`wheelState` (`m.wheel`)** — diff-pane wheel coalescing (issue #179): `gen`, `renderPending`,
   `tickInFlight`
 
@@ -347,9 +350,14 @@ key to struct field mapping.
 
 ### app/annotation/ — annotation store
 
-In-memory store for annotations. Each `Annotation` has file, line, text, and optional `EndLine` for
-hunk range headers (triggered when comment contains "hunk" keyword). Structured output formatting
-for export. `FormatOutput` escapes body lines that start with `## ` (with trailing space, matching
+In-memory store for annotations. Each `Annotation` has file, line, text, optional `EndLine` for
+hunk range headers (triggered when comment contains "hunk" keyword), and an optional `Kind` — one of
+the Conventional Comments labels listed once in `kind.go` (`bug`, `suggestion`, `question`,
+`nitpick`, `praise`). A typed annotation may have an empty comment. Structured output formatting
+for export. The record header grammar does not carry the kind: it is written as a label at the
+start of the body (`kind: text`, or the bare `kind` when the comment is empty) and `Parse` strips a
+leading known label back into `Kind`; unknown labels stay in the text and untyped annotations are
+emitted byte-identically. `FormatOutput` escapes body lines that start with `## ` (with trailing space, matching
 the record-header form) by prefixing a single space so downstream parsers cannot confuse a comment
 line for a new record header. Lines starting with `###` or `##` without a space are left unchanged.
 `WriteFile(path)` formats once via `FormatOutput`, persists atomically by delegating to
@@ -522,15 +530,19 @@ be independently toggled.
 ```
 User presses 'a' on diff line
   → annotating = true, annotateInput focused
-  → Enter → store.Add(file, line, text)  (single-line fast path)
+  → Tab / Shift+Tab → cycle annot.kind (none → bug → suggestion → question → nitpick → praise)
+  → Enter → store.Add(file, line, text, kind)  (single-line fast path; empty text saves only
+            when a kind is selected, an existing multi-line comment is kept and only re-kinded)
   → Ctrl+E → openEditor()
       → editor.Editor.Command(seed)     (app/editor)
       → tea.ExecProcess(cmd, complete)  (suspends bubbletea, hands over tty)
       → editorFinishedMsg{content, err, target...}
       → handleEditorFinished:
           err != nil     → log, keep annotation mode open, preserve input
-          content == ""  → cancelAnnotation (preserve existing annotation)
-          otherwise      → saveComment(content, fileLevel, line, type)
+          content == "" && kind == "" → cancelAnnotation (preserve existing annotation)
+          otherwise      → saveComment(content, kind, fileLevel, line, type)
+User presses '+' on diff line (quick_praise)
+  → quickPraise: re-kind an existing annotation as praise, or add a comment-less praise
   → re-render shows annotation (multi-line aware) below diff line
   → 'O' (flush_output, requires --output and/or PostFlushHook):
       → empty store: status hint, no export

@@ -75,6 +75,11 @@ func (m Model) buildHelpSpec() overlay.HelpSpec {
 				overlay.HelpEntry{Keys: "↓ / Ctrl+N", Description: pad + "recall next search query / clear (in search prompt)"},
 			)
 		}
+		if sec.Name == "Annotations" {
+			entries = append(entries,
+				overlay.HelpEntry{Keys: "Tab / Shift+Tab", Description: pad + "cycle annotation kind (in annotation input)"},
+			)
+		}
 		result = append(result, overlay.HelpSection{Title: sec.Name, Entries: entries})
 
 		if sec.Name == keymap.SectionPane {

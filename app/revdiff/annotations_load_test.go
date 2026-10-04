@@ -384,3 +384,29 @@ func TestPreloadAnnotations_EmptyFile(t *testing.T) {
 	require.NoError(t, preloadAnnotations(path, store, r, "", false, nil, nil, "", &bytes.Buffer{}))
 	assert.Equal(t, 0, store.Count())
 }
+
+func TestPreloadAnnotations_KeepsKinds(t *testing.T) {
+	body := "## a.go (file-level)\nsuggestion: split this file\n\n" +
+		"## a.go:7 ( )\npraise\n\n" +
+		"## a.go:8 (+)\nbug: off by one\n"
+	path := writeTempAnnotations(t, body)
+	store := annotation.NewStore()
+	r := &mocks.RendererMock{
+		ChangedFilesFunc: func(string, bool) ([]diff.FileEntry, error) {
+			return []diff.FileEntry{{Path: "a.go", Status: diff.FileModified}}, nil
+		},
+		FileDiffFunc: func(diff.FileDiffRequest) ([]diff.DiffLine, error) {
+			return []diff.DiffLine{
+				{OldNum: 7, NewNum: 7, Content: "ctx", ChangeType: diff.ChangeContext},
+				{NewNum: 8, Content: "add", ChangeType: diff.ChangeAdd},
+			}, nil
+		},
+	}
+	require.NoError(t, preloadAnnotations(path, store, r, "", false, nil, nil, "", &bytes.Buffer{}))
+	assert.Equal(t, []annotation.Annotation{
+		{File: "a.go", Kind: "suggestion", Comment: "split this file"},
+		{File: "a.go", Line: 7, Type: " ", Kind: "praise"},
+		{File: "a.go", Line: 8, Type: "+", Kind: "bug", Comment: "off by one"},
+	}, store.Get("a.go"), "a kind-only annotation with an empty comment is still loaded")
+	assert.Equal(t, body, store.FormatOutput(), "preloaded kinds round-trip byte-identically")
+}

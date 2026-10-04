@@ -17,7 +17,7 @@
 //   - collapsed.go — collapsed diff mode: hides removed lines, shows modified markers,
 //     per-hunk expansion, delete-only placeholders
 //   - annotate.go — annotation input lifecycle: start, save, cancel, delete (line and file level),
-//     cursor-viewport coordination, annotation key map
+//     annotation kinds (Tab cycling, quick praise), cursor-viewport coordination, annotation key map
 //   - annotlist.go — annotation list spec building, cross-file jump logic
 //   - editor.go — external $EDITOR handoffs: [ExternalEditor] interface,
 //     [editorFinishedMsg], openEditor (annotation temp-file editing with read-back),

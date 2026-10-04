@@ -912,3 +912,23 @@ func TestModel_EditorFinishedDoesNotEnableMouseWhenTrackingDisabled(t *testing.T
 	require.Len(t, model.store.Get("a.go"), 1)
 	assert.Equal(t, "review note", model.store.Get("a.go")[0].Comment)
 }
+
+func TestOpenEditor_CapturesKind(t *testing.T) {
+	lines := []diff.DiffLine{{NewNum: 1, Content: "x", ChangeType: diff.ChangeAdd}}
+	m := testModel([]string{"a.go"}, map[string][]diff.DiffLine{"a.go": lines})
+	m.tree = testNewFileTree([]string{"a.go"})
+	m.layout.focus = paneDiff
+	m.file.name = "a.go"
+	m.file.lines = lines
+	m.nav.diffCursor = 0
+
+	m.editor = mockEditor("", errors.New("temp file unavailable"))
+	m.startAnnotation()
+	m.cycleAnnotationKind(1)
+	cmd := m.openEditor()
+	require.NotNil(t, cmd)
+	m.cycleAnnotationKind(1) // a later selection change must not leak into the captured target
+	finished, ok := cmd().(editorFinishedMsg)
+	require.True(t, ok)
+	assert.Equal(t, "bug", finished.kind)
+}

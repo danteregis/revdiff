@@ -38,6 +38,7 @@ func TestDefault_allExpectedBindings(t *testing.T) {
 		{"a", ActionConfirm}, {"enter", ActionConfirm},
 		{"A", ActionAnnotateFile}, {"d", ActionDeleteAnnotation}, {"@", ActionAnnotList}, {"ctrl+e", ActionOpenEditor},
 		{"}", ActionNextAnnotation}, {"{", ActionPrevAnnotation}, {"O", ActionFlushOutput},
+		{"+", ActionQuickPraise},
 		{"v", ActionToggleCollapsed}, {"C", ActionToggleCompact}, {"w", ActionToggleWrap}, {"t", ActionToggleTree},
 		{"L", ActionToggleLineNums}, {"B", ActionToggleBlame}, {"W", ActionToggleWordDiff},
 		{".", ActionToggleHunk}, {" ", ActionMarkReviewed}, {"f", ActionFilter}, {"F", ActionFilterUnreviewed},
@@ -367,6 +368,26 @@ func TestActionFlushOutput_DumpEntry(t *testing.T) {
 	var buf strings.Builder
 	require.NoError(t, km.Dump(&buf))
 	assert.Contains(t, buf.String(), "map O flush_output")
+}
+
+func TestActionQuickPraise(t *testing.T) {
+	assert.True(t, IsValidAction(ActionQuickPraise))
+	km := Default()
+	assert.Equal(t, ActionQuickPraise, km.Resolve("+"))
+
+	var found bool
+	for _, e := range defaultDescriptions() {
+		if e.Action == ActionQuickPraise {
+			assert.Equal(t, "Annotations", e.Section)
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "ActionQuickPraise should have a help entry")
+
+	var buf strings.Builder
+	require.NoError(t, km.Dump(&buf))
+	assert.Contains(t, buf.String(), "map + quick_praise")
 }
 
 func TestActionScrollConstants_InNavigationActions(t *testing.T) {

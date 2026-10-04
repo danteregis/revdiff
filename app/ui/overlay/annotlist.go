@@ -99,10 +99,15 @@ func (a *annotListOverlay) formatItem(item AnnotationItem, width int, selected b
 	prefixWidth := lipgloss.Width(prefix)
 	commentSpace := width - prefixWidth - 4 // 2 for cursor prefix, 2 for gap
 
+	text := item.Comment
+	if item.Kind != "" {
+		text = strings.TrimSuffix("["+item.Kind+"] "+text, " ")
+	}
+
 	var comment string
-	if commentSpace > 3 && item.Comment != "" {
+	if commentSpace > 3 && text != "" {
 		// flatten newlines so multi-line comments render as a single row
-		comment = strings.ReplaceAll(item.Comment, "\n", " ⏎ ")
+		comment = strings.ReplaceAll(text, "\n", " ⏎ ")
 		if lipgloss.Width(comment) > commentSpace {
 			comment = ansi.Truncate(comment, commentSpace-3, "...")
 		}
