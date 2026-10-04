@@ -561,11 +561,15 @@ color-border = #6272a4
                 <tr><td><code>@</code></td><td>Toggle annotation list popup</td></tr>
                 <tr><td><code>}</code> / <code>{</code></td><td>Jump to next/previous annotation (always crosses file boundaries; silent no-op at the first/last annotation)</td></tr>
                 <tr><td><code>d</code></td><td>Delete annotation under cursor</td></tr>
+                <tr><td><code>+</code></td><td>Praise current line (no comment needed; re-kinds an existing annotation as praise)</td></tr>
                 <tr><td><code>O</code></td><td>Export annotations without exiting (requires <code>--output</code> and/or <code>--post-flush-command</code>)</td></tr>
+                <tr><td><code>Tab</code> / <code>Shift+Tab</code></td><td>Cycle annotation kind: none &rarr; bug &rarr; suggestion &rarr; question &rarr; nitpick &rarr; praise (during annotation input)</td></tr>
                 <tr><td><code>Ctrl+E</code></td><td>Open <code>$EDITOR</code> for multi-line annotation (<code>open_editor</code> &mdash; rebindable, during annotation input)</td></tr>
                 <tr><td><code>Esc</code></td><td>Cancel annotation input</td></tr>
             </tbody>
         </table>
+
+        <p>Annotations can carry a kind, modeled on <a href="https://conventionalcomments.org/">Conventional Comments</a> labels: <code>bug</code>, <code>suggestion</code>, <code>question</code>, <code>nitpick</code>, or <code>praise</code>. While the annotation input is open, <code>Tab</code> and <code>Shift+Tab</code> cycle the kind, shown as a <code>[kind]</code> badge before the text; editing an existing annotation starts from its kind. With a kind selected, <code>Enter</code> saves even when the text is empty (e.g. a bare praise). Saved annotations show the badge in the diff and in the annotation list. <code>+</code> (<code>quick_praise</code>) praises the line under the cursor in one keystroke without opening the input.</p>
         <p>While the annotation input is active, press <code>Ctrl+E</code> (or whatever key is bound to <code>open_editor</code>) to hand off the current text to an external editor for multi-line comments. Editor resolution: <code>$EDITOR</code> &rarr; <code>$VISUAL</code> &rarr; <code>vi</code>. Values with arguments work (e.g. <code>EDITOR="code --wait"</code>). On editor save and quit, the full file contents (including newlines) become the annotation. Quitting the editor with an empty file cancels the annotation and preserves any previously stored note on that line. Multi-line annotations are rendered line-by-line in the diff view, shown flattened in the annotation list popup (<code>@</code>), and emitted with embedded newlines in the structured output.</p>
         <p>Press <code>e</code> in the diff pane to open the focused file in <code>$EDITOR</code> (<code>open_file_in_editor</code> &mdash; rebindable) when revdiff has a stable source path. Editor resolution is the same <code>$EDITOR</code> &rarr; <code>$VISUAL</code> &rarr; <code>vi</code> chain. Known editors receive either <code>$EDITOR +N path</code> or <code>$EDITOR --goto path:N</code> as appropriate; unknown editors receive only the file path. File lines are resolved on a best-effort basis. For working tree changes, a clean editor exit reloads the displayed file. For <code>--staged</code> or refs, a clean editor exit returns to revdiff without reloading the displayed diff. In compare mode, <code>e</code> opens the <code>--compare-new</code> side. Working tree files with line annotations cannot be opened for editing because edits can orphan those annotations. Diffs read with <code>--stdin</code> do not support opening files. Unsupported rows or files and editor errors show a status hint instead of launching an editor or changing the diff.</p>
         <p>Press <code>O</code> to export the current annotations without exiting (<code>flush_output</code>, rebindable). Configure <code>--output</code>, <code>--post-flush-command</code>, or both. With <code>--output</code>, each flush atomically overwrites the file with the full current annotation set (a snapshot, not an append log). With <code>--post-flush-command</code>, the same snapshot is sent to the command on stdin. If neither is configured, or if there are no annotations, revdiff shows a status hint and does nothing.</p>
@@ -673,7 +677,7 @@ map alt+t&gt;n theme_select</code></div>
         <p><strong>File/Hunk:</strong> <code>next_item</code>, <code>prev_item</code>, <code>jump_file</code>, <code>next_hunk</code>, <code>prev_hunk</code>, <code>open_file_in_editor</code></p>
         <p><strong>Pane:</strong> <code>toggle_pane</code>, <code>focus_tree</code>, <code>focus_diff</code></p>
         <p><strong>Search:</strong> <code>search</code></p>
-        <p><strong>Annotations:</strong> <code>confirm</code>, <code>annotate_file</code>, <code>delete_annotation</code>, <code>annot_list</code>, <code>open_editor</code>, <code>next_annotation</code>, <code>prev_annotation</code>, <code>flush_output</code></p>
+        <p><strong>Annotations:</strong> <code>confirm</code>, <code>annotate_file</code>, <code>delete_annotation</code>, <code>annot_list</code>, <code>open_editor</code>, <code>next_annotation</code>, <code>prev_annotation</code>, <code>flush_output</code>, <code>quick_praise</code></p>
         <p><strong>View:</strong> <code>toggle_collapsed</code>, <code>toggle_compact</code>, <code>toggle_wrap</code>, <code>toggle_tree</code>, <code>toggle_line_numbers</code>, <code>toggle_blame</code>, <code>toggle_word_diff</code>, <code>toggle_hunk</code>, <code>toggle_untracked</code>, <code>mark_reviewed</code>, <code>filter_unreviewed</code>, <code>theme_select</code>, <code>filter</code>, <code>info</code>, <code>reload</code></p>
         <p><strong>Quit:</strong> <code>quit</code>, <code>discard_quit</code>, <code>help</code>, <code>dismiss</code></p>
 
@@ -848,9 +852,16 @@ use errors.Is() instead of direct comparison
 <span class="code-comment">## handler.go:43-67 (+)</span>
 refactor this hunk to reduce nesting
 
+<span class="code-comment">## handler.go:88 (+)</span>
+question: why retry three times here?
+
+<span class="code-comment">## handler.go:102 (+)</span>
+praise
+
 <span class="code-comment">## store.go:18 (-)</span>
-don't remove this validation</code></div>
+bug: don't remove this validation</code></div>
         <p>Each annotation block: <code>## filename:line[-end] (type)</code> where type is <code>(+)</code> added, <code>(-)</code> removed, or <code>(file-level)</code>; <code>-end</code> is included when the annotation covers a line range.</p>
+        <p>An annotation&rsquo;s kind is written as a label at the start of its body: <code>kind: comment</code> on the first line, or the bare <code>kind</code> when the annotation has no text (e.g. a quick praise). Untyped annotations have no label. When reading annotations back (<code>--annotations</code>), a first body line that starts with one of the known kinds (<code>bug</code>, <code>suggestion</code>, <code>question</code>, <code>nitpick</code>, <code>praise</code>) followed by <code>:</code> &mdash; or consists of the bare kind &mdash; sets the kind; other labels stay part of the comment text.</p>
         <p>When annotation text contains the keyword &ldquo;hunk&rdquo; (case-insensitive, whole word), the output header automatically expands to include the full hunk line range (e.g., <code>handler.go:43-67 (+)</code> instead of <code>handler.go:43 (+)</code>). This gives AI consumers the range context without any extra steps.</p>
         <p>Comment body lines starting with <code>## </code> (the record-header form) are prefixed with a single space on output so parsers that split on <code>## </code> record headers cannot confuse a multi-line comment for a new record.</p>
 

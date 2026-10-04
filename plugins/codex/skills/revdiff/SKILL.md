@@ -208,6 +208,13 @@ don't remove this validation
 Each annotation block has:
 - `## filename:line (type)` — which file and line, `(+)` = added, `(-)` = removed, `(file-level)` = file note
 - Comment text below — what the user wants changed
+- Optional kind label at the start of the comment ([Conventional Comments](https://conventionalcomments.org/)): `bug: …`, `suggestion: …`, `question: …`, `nitpick: …`, or a bare `praise` with no text. Treat each kind as:
+  - `bug` — a defect; must fix.
+  - `suggestion` — a proposed change; apply it unless there is a concrete reason not to, and say why if you skip it.
+  - `question` — answer it (an explanation request in Step 3.5); change code only if the answer exposes a problem.
+  - `nitpick` — minor, optional polish; apply when cheap, never block on it.
+  - `praise` — positive feedback; no change required. Acknowledge it and leave that code as is.
+  - no label — classify by the text as usual.
 
 ### Step 3.5: Classify Annotations
 
@@ -216,10 +223,11 @@ Split annotations into two categories:
 **Explanation requests** — annotation matches either rule (case-insensitive):
 - contains two or more consecutive question marks anywhere in the text (`??`, `???`, etc.) — a language-neutral shortcut for "please explain"
 - OR starts with one of: `explain`, `remind`, `describe`, `what is`, `what are`, `how does`, `how do`, `clarify`
+- OR carries the `question` kind label
 
 These are questions the user wants answered, not code changes.
 
-**Code-change directives** — everything else. These are instructions to modify code.
+**Code-change directives** — everything else except `praise` annotations, which need no action. These are instructions to modify code.
 
 **If explanation requests are found:**
 

@@ -774,9 +774,13 @@ The file picker lists paths currently visible in the sidebar, so annotated-only 
 | `@` | Toggle annotation list popup (navigate and jump to any annotation) |
 | `}` / `{` | Jump to next/previous annotation (always crosses file boundaries; silent no-op at the first/last annotation) |
 | `d` | Delete annotation under cursor |
+| `+` | Praise current line (no comment needed; re-kinds an existing annotation as praise) |
 | `O` | Export annotations without exiting (requires `--output` and/or `--post-flush-command`) |
+| `Tab` / `Shift+Tab` (during annotation input) | Cycle annotation kind: none → bug → suggestion → question → nitpick → praise |
 | `Ctrl+E` (during annotation input) | Open `$EDITOR` for multi-line annotation (`open_editor` — rebindable) |
 | `Esc` | Cancel annotation input |
+
+Annotations can carry a kind, modeled on [Conventional Comments](https://conventionalcomments.org/) labels: `bug`, `suggestion`, `question`, `nitpick`, or `praise`. While the annotation input is open, `Tab` and `Shift+Tab` cycle the kind, shown as a `[kind]` badge before the text; editing an existing annotation starts from its kind. With a kind selected, `Enter` saves even when the text is empty (e.g. a bare praise). Saved annotations show the badge in the diff and in the annotation list. `+` (`quick_praise`) praises the line under the cursor in one keystroke without opening the input.
 
 While the annotation input is active, press `Ctrl+E` (or whatever key is bound to `open_editor`) to hand off the current text to an external editor for multi-line comments. Editor resolution: `$EDITOR` → `$VISUAL` → `vi`. Values with arguments work (e.g. `EDITOR="code --wait"`). On editor save and quit, the full file contents (including newlines) become the annotation. Quitting the editor with an empty file cancels the annotation and preserves any previously stored note on that line. Multi-line annotations are rendered line-by-line in the diff view, shown flattened in the annotation list popup (`@`), and emitted with embedded newlines in the structured output.
 
@@ -936,7 +940,7 @@ When the leader is pressed, the status bar shows `Pending: ctrl+w, esc to cancel
 
 **Search:** `search`
 
-**Annotations:** `confirm` (annotate line / select file), `annotate_file`, `delete_annotation`, `annot_list`, `open_editor`, `next_annotation`, `prev_annotation`, `flush_output`
+**Annotations:** `confirm` (annotate line / select file), `annotate_file`, `delete_annotation`, `annot_list`, `open_editor`, `next_annotation`, `prev_annotation`, `flush_output`, `quick_praise`
 
 **View:** `toggle_collapsed`, `toggle_compact`, `toggle_wrap`, `toggle_tree`, `toggle_line_numbers`, `toggle_blame`, `toggle_word_diff`, `toggle_hunk`, `toggle_untracked`, `mark_reviewed`, `filter_unreviewed`, `theme_select`, `filter`, `info`, `reload`
 
@@ -979,9 +983,17 @@ use errors.Is() instead of direct comparison
 ## handler.go:43-67 (+)
 refactor this hunk to reduce nesting
 
+## handler.go:88 (+)
+question: why retry three times here?
+
+## handler.go:102 (+)
+praise
+
 ## store.go:18 (-)
-don't remove this validation
+bug: don't remove this validation
 ```
+
+An annotation's kind is written as a label at the start of its body: `kind: comment` on the first line, or the bare `kind` when the annotation has no text (e.g. a quick praise). Untyped annotations have no label. When reading annotations back (`--annotations`), a first body line that starts with one of the known kinds (`bug`, `suggestion`, `question`, `nitpick`, `praise`) followed by `:` — or consists of the bare kind — sets the kind; other labels stay part of the comment text.
 
 When annotation text contains the keyword "hunk" (case-insensitive, whole word), the output header automatically expands to include the full hunk line range (e.g., `handler.go:43-67 (+)` instead of `handler.go:43 (+)`). This gives AI consumers the range context without any extra steps.
 

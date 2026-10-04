@@ -110,6 +110,7 @@ explain why we chose this approach over alternatives
 Each annotation block has:
 - `## filename:line (type)` -- which file and line
 - Comment text below -- what the user wants changed or clarified
+- Optional kind label at the start of the comment (Conventional Comments): `bug: ...`, `suggestion: ...`, `question: ...`, `nitpick: ...`, or a bare `praise` with no text. `bug` = the plan is wrong here, must fix; `suggestion` = apply unless there is a concrete reason not to; `question` = answer it (an explanation request), revise only if the answer exposes a gap; `nitpick` = minor, optional; `praise` = positive feedback, keep that part of the plan as is.
 
 ### Step 3.5: Classify Annotations
 
@@ -118,10 +119,11 @@ Split annotations into two categories:
 **Explanation requests** -- annotation matches either rule (case-insensitive):
 - contains two or more consecutive question marks anywhere in the text (`??`, `???`, etc.) -- a language-neutral shortcut for "please explain"
 - OR starts with one of: `explain`, `remind`, `describe`, `what is`, `what are`, `how does`, `how do`, `clarify`
+- OR carries the `question` kind label
 
 These are questions the user wants answered, not plan changes.
 
-**Plan-change directives** -- everything else. These are instructions to modify the plan content.
+**Plan-change directives** -- everything else except `praise` annotations, which need no action. These are instructions to modify the plan content.
 
 **If explanation requests are found:**
 

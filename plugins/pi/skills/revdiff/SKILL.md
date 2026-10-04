@@ -54,6 +54,8 @@ When annotations arrive from `/revdiff` or `revdiff_review`:
 2. Classify each annotation into:
    - **explanation requests**: questions or requests to explain/clarify behavior
    - **code-change directives**: requested repository changes
+
+   A comment may start with a [Conventional Comments](https://conventionalcomments.org/) kind label: `bug: …` = defect, must fix; `suggestion: …` = apply unless there is a concrete reason not to; `question: …` = an explanation request, change code only if the answer exposes a problem; `nitpick: …` = minor, optional; bare `praise` = positive feedback, no change required.
 3. Answer explanation requests first in normal chat. Do not open another revdiff session just to show the explanation.
 4. If all annotations are explanation requests and no repository files change, ask the user to choose between:
    - `Continue review` — rerun the original `revdiff_review` target
