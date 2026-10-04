@@ -79,6 +79,7 @@
         <a href="#search">Search</a>
         <a href="#annotations">Annotations</a>
         <a href="#view">View toggles</a>
+        <a href="#switching-review">Switching the review</a>
         <a href="#status-bar-icons">Status bar icons</a>
         <a href="#mouse-support">Mouse support</a>
         <a href="#custom-keys">Custom keybindings</a>
@@ -596,10 +597,22 @@ printf '\033]52;c;%s\007' "$data" > /dev/tty</code></div>
                 <tr><td><code>?</code></td><td>Help overlay</td></tr>
                 <tr><td><code>i</code></td><td>Info popup &mdash; review scope (mode, VCS, ref, filters, file/status counts, aggregate <code>+/-</code> stats) plus the commit log for the current ref range when applicable</td></tr>
                 <tr><td><code>R</code></td><td>Reload diff from VCS (warns if annotations exist)</td></tr>
+                <tr><td><code>b</code></td><td>Switch the review to a branch, an open pull request, or a typed ref (git only; warns if annotations exist)</td></tr>
                 <tr><td><code>q</code></td><td>Quit, output annotations</td></tr>
                 <tr><td><code>Q</code></td><td>Discard annotations and quit</td></tr>
             </tbody>
         </table>
+
+        <h2 id="switching-review">Switching the reviewed diff</h2>
+        <p>Press <code>b</code> (<code>switch_ref</code>) to change what you are reviewing without restarting revdiff. The switcher lists three sections:</p>
+        <ul>
+            <li><strong>original</strong> &mdash; the review revdiff was started with (working tree, <code>--staged</code>, or the refs you passed)</li>
+            <li><strong>pull requests</strong> &mdash; open GitHub pull requests from <code>gh pr list</code> (title, head &rarr; base, author, draft marker). Needs the <a href="https://cli.github.com/">gh</a> CLI, authenticated; without it the section is replaced by a short notice and everything else keeps working</li>
+            <li><strong>branches</strong> &mdash; local branches, most recently committed first</li>
+        </ul>
+        <p>Branches and pull requests use GitHub's three-dot comparison: only what changed on the branch since it forked from the base, not what landed on the base meanwhile. A branch <code>X</code> becomes <code>&lt;base&gt;...X</code>, where the base is the target of <code>origin/HEAD</code>, else the first existing of <code>origin/main</code>, <code>origin/master</code>, <code>upstream/main</code>, <code>upstream/master</code>, <code>main</code>, <code>master</code>. A pull request is fetched (<code>refs/pull/N/head</code> plus its base branch, into <code>FETCH_HEAD</code> only &mdash; no local branch is created or moved and the working tree is untouched) and reviewed as <code>&lt;base commit&gt;...&lt;head commit&gt;</code>, exactly the diff GitHub shows. gh is pinned to the repository <code>gh repo set-default</code> resolves to, else to <code>origin</code>'s URL, so it never prompts.</p>
+        <p>Type to filter by name, title, author, or branch. Any typed text can also be used as a ref directly &mdash; pick the <code>use "&lt;text&gt;"</code> row (it is the only row when nothing matches), e.g. <code>main...feature</code>, <code>HEAD~3</code>, or <code>v1.2..v1.3</code>; it is validated before the switch. Arrow keys or the mouse wheel move, <code>Enter</code> or left-click switches, the first <code>Esc</code> clears the filter and the second closes the switcher.</p>
+        <p>Switching reloads the file list and commit log like <code>R</code>. Existing annotations refer to lines of the previous diff, so revdiff asks for <code>y</code> before dropping them (<code>--no-confirm-reload</code> skips the prompt). The info popup (<code>i</code>) names the selected branch or pull request and shows the full ref, the commit list follows the new range, and the history auto-save records the ref that was on screen at exit. Reviewed marks survive only for files whose change is identical in the new diff. The switcher is available for git diffs; it is not offered with <code>--stdin</code>, <code>--compare-old/--compare-new</code>, <code>--all-files</code>, standalone <code>--only</code> files, or in Mercurial and Jujutsu repositories.</p>
 
         <h2 id="status-bar-icons">Status bar icons</h2>
         <p>The status bar shows a fixed row of mode indicators on the right side. All slots are always rendered &mdash; active modes use the status bar foreground color, inactive modes use muted gray, so the row occupies the same width regardless of what's toggled on. The help overlay (<code>?</code>) shows each icon beside the key that controls it.</p>
@@ -634,8 +647,9 @@ printf '\033]52;c;%s\007' "$data" > /dev/tty</code></div>
             <li><strong>Left-click in the theme popup</strong> &mdash; confirms the clicked theme (same as pressing <code>Enter</code>). Clicks on the filter row or blank separator are ignored.</li>
             <li><strong>Left-click in the file picker</strong> &mdash; jumps to the clicked file (same as pressing <code>Enter</code>). Clicks on the filter row or blank separator are ignored.</li>
             <li><strong>Scroll wheel in the file picker</strong> &mdash; moves the picker cursor. Shift+wheel uses a half-page step.</li>
+            <li><strong>Left-click in the review switcher</strong> (<code>b</code>) &mdash; switches to the clicked branch, pull request, or typed ref. Section headers, the filter row, and the blank separator are ignored; the wheel moves the cursor.</li>
         </ul>
-        <p>Horizontal wheel, right-click, middle-click, drag selection, and clicks on the status bar or diff header are intentionally ignored. Clicks outside an open overlay are swallowed &mdash; dismiss an overlay with <code>Esc</code> or its toggle key. Modal states (annotation input, search input, confirm discard, reload confirm) swallow mouse events entirely.</p>
+        <p>Horizontal wheel, right-click, middle-click, drag selection, and clicks on the status bar or diff header are intentionally ignored. Clicks outside an open overlay are swallowed &mdash; dismiss an overlay with <code>Esc</code> or its toggle key. Modal states (annotation input, search input, confirm discard, reload confirm, review-switch confirm) swallow mouse events entirely.</p>
         <p><strong>Text selection trade-off</strong> &mdash; once mouse tracking is on, plain drag is captured by revdiff. For terminal-native text selection:</p>
         <ul>
             <li><strong>kitty</strong>: hold <code>Ctrl+Shift</code> while dragging</li>
@@ -674,7 +688,7 @@ map alt+t&gt;n theme_select</code></div>
         <p><strong>Pane:</strong> <code>toggle_pane</code>, <code>focus_tree</code>, <code>focus_diff</code></p>
         <p><strong>Search:</strong> <code>search</code></p>
         <p><strong>Annotations:</strong> <code>confirm</code>, <code>annotate_file</code>, <code>delete_annotation</code>, <code>annot_list</code>, <code>open_editor</code>, <code>next_annotation</code>, <code>prev_annotation</code>, <code>flush_output</code></p>
-        <p><strong>View:</strong> <code>toggle_collapsed</code>, <code>toggle_compact</code>, <code>toggle_wrap</code>, <code>toggle_tree</code>, <code>toggle_line_numbers</code>, <code>toggle_blame</code>, <code>toggle_word_diff</code>, <code>toggle_hunk</code>, <code>toggle_untracked</code>, <code>mark_reviewed</code>, <code>filter_unreviewed</code>, <code>theme_select</code>, <code>filter</code>, <code>info</code>, <code>reload</code></p>
+        <p><strong>View:</strong> <code>toggle_collapsed</code>, <code>toggle_compact</code>, <code>toggle_wrap</code>, <code>toggle_tree</code>, <code>toggle_line_numbers</code>, <code>toggle_blame</code>, <code>toggle_word_diff</code>, <code>toggle_hunk</code>, <code>toggle_untracked</code>, <code>mark_reviewed</code>, <code>filter_unreviewed</code>, <code>theme_select</code>, <code>filter</code>, <code>info</code>, <code>reload</code>, <code>switch_ref</code></p>
         <p><strong>Quit:</strong> <code>quit</code>, <code>discard_quit</code>, <code>help</code>, <code>dismiss</code></p>
 
         <h2 id="vim-motion">Vim-motion preset</h2>

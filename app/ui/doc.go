@@ -25,6 +25,9 @@
 //   - themeselect.go — theme selector operations: open, preview/confirm/cancel, apply theme
 //     (delegates to injected [ThemeCatalog] for discovery and persistence)
 //   - filepicker.go — file picker open and selected-path jump integration
+//   - refswitch.go — runtime review switcher: [RefSource] interface, branch / pull-request
+//     list loading, selection resolution (fetch, validation), annotation-drop confirmation,
+//     and the ref switch that reloads through triggerReload
 //   - search.go — incremental search: input handling, match computation, navigation
 //
 // Model mutable state is organized into explicit sub-structs by concern:
@@ -67,7 +70,7 @@
 // ModelConfig.NewFileTree and ModelConfig.ParseTOC factory closures wired in app/revdiff/main.go.
 //
 // Layered popup UI lives in the [overlay] sub-package (app/ui/overlay/).
-// It owns help, annotation list, theme selector, and file picker overlays — all popup state
+// It owns help, annotation list, theme selector, file picker, and review switcher overlays — all popup state
 // (cursor, offset, filter text, items, active kind), rendering (box layout,
 // item formatting, border title injection, ANSI-aware centered compositing),
 // and key dispatch (navigation, confirm, cancel, filter input). A Manager
@@ -78,7 +81,8 @@
 //
 // The key interfaces consumed by Model are [Renderer] (provides changed files and diffs),
 // [SyntaxHighlighter] (provides ANSI-highlighted lines), [Blamer] (provides blame data),
-// [ThemeCatalog] (provides theme discovery, resolution, and persistence), and
+// [ThemeCatalog] (provides theme discovery, resolution, and persistence),
 // [ExternalEditor] (provides $EDITOR invocation for annotation temp-file editing
-// and source-file opening). All are defined in this package and implemented externally.
+// and source-file opening), and [RefSource] (lists branches and pull requests and
+// resolves them to refs for the review switcher). All are defined in this package and implemented externally.
 package ui

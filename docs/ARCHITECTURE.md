@@ -26,6 +26,7 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 │  app/annotation/  — in-memory annotation store      │
 │  app/editor/      — external $EDITOR invocation     │
 │  app/handoff/     — post-flush command preparation  │
+│  app/refsource/   — branch/PR listing for switcher  │
 │  app/keymap/      — configurable keybindings        │
 │  app/theme/       — Catalog-centric theme system    │
 │  app/history/     — review session auto-save        │
@@ -103,7 +104,9 @@ to carry the rename origin:
 interface implemented by `Git`/`Hg`/`Jj` and consumed by the `i` info overlay. Separate from the
 base `Renderer` so non-VCS renderers (`FileReader`, `DirectoryReader`, `StdinReader`) stay
 unaffected. Each VCS translates the pre-combined ref string to its own log syntax (`X..HEAD` for
-git, `X::.` for hg, `X..@` for jj), caps results at 500 commits, and strips raw `\x1b` bytes from
+git, `X::.` for hg, `X..@` for jj; git maps a three-dot `X...Y` to `X..Y` so the list holds
+exactly the commits behind the `X...Y` diff, as GitHub's PR commit list does, not the symmetric
+difference), caps results at 500 commits, and strips raw `\x1b` bytes from
 subject/body at parse time so the overlay can render without re-scanning for ANSI injection. Hg uses
 ASCII US/RS separators (`\x1f`/`\x1e`) because literal NUL is invalid in argv; git and jj use
 NUL/SOH via stdout.
@@ -159,6 +162,10 @@ across files by concern to keep files under ~500 lines:
   `ThemeCatalog`)
 - **`filepicker.go`** — file picker open and selected-path jump integration; delegates
   visible-order/filter ownership to `FileTreeComponent` and loading to the guarded file loader
+- **`refswitch.go`** — runtime review switcher (`switch_ref`, default `b`): consumer-side
+  `RefSource` interface, async branch / pull-request list loads (`listSeq`), selection resolution
+  (PR fetch, typed-ref validation; `resolveSeq`), the annotation-drop confirmation, and
+  `switchRef`, which re-points `cfg.ref` and reloads through `triggerReload`
 - **`search.go`** — search input handling, match computation, navigation
 - **`mouse.go`** — mouse event routing: `handleMouse` dispatch, `hitTest` pane classification
   (`hitZone`), wheel/left-click helpers (`clickTree`, `clickDiff`), layout helpers
@@ -190,6 +197,8 @@ Each source file has a matching `_test.go`.
   `fileAnnotating`, `cursorOnAnnotation`, `input`, `rowCache`
 - **`wheelState` (`m.wheel`)** — diff-pane wheel coalescing (issue #179): `gen`, `renderPending`,
   `tickInFlight`
+- **`refSwitchState` (`m.refs`)** — review switcher: injected `RefSource`, the startup review
+  (`origin`, restored by the switcher's "original" entry), loaded lists, seqs, pending confirmation
 
 Methods remain on `Model` — the sub-structs group mutable state for clarity, not to create
 mini-models.
@@ -255,6 +264,12 @@ Layered popup system with mutual exclusivity (one overlay at a time).
 - **`themeSelectOverlay`** — theme picker with fzf-style filter, live swatch preview
 - **`filePickerOverlay`** — type-to-filter visible-file picker with current-file positioning,
   arrow-key navigation, mouse selection, and basename-preserving path truncation
+- **`refPickerOverlay`** (`refpicker.go`) — review switcher: caller-supplied items grouped under
+  section headers (original / pull requests / branches), type-to-filter on label + detail, a
+  trailing `use "<text>"` row that returns the typed filter as a raw ref, muted loading/notice lines
+  below the list, and `UpdateRefPicker` to swap in async lists while keeping the filter and cursor.
+  Shares the file picker's box style and click geometry (`entriesTop=4`); header rows are not
+  selectable
 - **`infoOverlay`** (`info.go`) — unified info popup (description + session details + commit log).
   Description prose comes from `--description` / `--description-file`, sanitized to strip
   ANSI/control bytes, then highlighted via the markdown chroma path once at `NewModel` time and
@@ -389,6 +404,28 @@ may write OSC 52 directly through `/dev/tty`. The optional `PostFlushHook` inter
 the UI consumer side and wired at the composition root only when `--post-flush-command` is set. The
 hook is an independent `O` export target; it does not require an output file.
 
+### app/refsource/ — review switcher sources
+
+Owns every git/gh process behind the runtime review switcher (`switch_ref`). `Source` (built by
+`New(repoRoot)`) exposes four methods, consumed through `ui.RefSource`:
+
+- `Branches()` — local branches via `git for-each-ref --sort=-committerdate`, each with a
+  three-dot `<base>...<branch>` ref. The base is `origin/HEAD`'s target, else the first existing of
+  `origin`/`upstream` `main`/`master`, else local `main`/`master`; the base branch itself has no ref.
+- `PullRequests()` — `gh pr list --json ...` pinned with `--repo` (gh's `repo set-default` value,
+  else `origin`'s URL) so gh never has to guess or prompt in a fork. `ErrGHNotFound` when gh is
+  missing; the UI shows any error as a non-fatal notice.
+- `PullRequestRef(n)` — `gh pr view` for the head/base commit ids, then `git fetch --no-tags
+  --refmap= <remote> refs/pull/N/head refs/heads/<base>` (a configured remote matching the PR's
+  repository, else its URL). Only `FETCH_HEAD` and the object database change — `--refmap=` stops
+  opportunistic remote-tracking updates. Returns `<baseOid>...<headOid>`, GitHub's PR diff.
+- `CheckRef(ref)` — validates a typed single ref or `A..B` / `A...B` range with `git rev-parse
+  --verify`, rejecting endpoints that start with `-`.
+
+Every command runs with `cmd.Dir` set to the repo, a context timeout, no shell, a null stdin, and
+`GIT_TERMINAL_PROMPT=0` / `GH_PROMPT_DISABLED=1`. Tests use real temporary repositories, a
+`url.<path>.insteadOf` rewrite for the "GitHub" remote, and a stub gh script.
+
 ### app/history/ — session auto-save
 
 `Save(Params)` writes review session as markdown to `~/.config/revdiff/history/`. Includes header,
@@ -431,8 +468,8 @@ belong to the consumer.
 - **`TOCComponent`** — 9 methods (navigation, cursor/section query+set, scroll-state, render);
   implemented by `sidepane.TOC`
 - **`overlayManager`** — `Active()`, `Kind()`, `OpenHelp()`, `OpenAnnotList()`, `OpenThemeSelect()`,
-  `OpenFilePicker()`, `OpenInfo()`, `UpdateInfo()`, `Close()`, `HandleKey()`, `HandleMouse()`,
-  `Compose()`; implemented by `overlay.Manager`
+  `OpenFilePicker()`, `OpenRefPicker()`, `UpdateRefPicker()`, `OpenInfo()`, `UpdateInfo()`,
+  `Close()`, `HandleKey()`, `HandleMouse()`, `Compose()`; implemented by `overlay.Manager`
 - **`ThemeCatalog`** — `Entries()`, `Resolve()`, `Persist()`; implemented by `themeCatalog` adapter
   in `app/revdiff/themes.go` (composes `theme.Catalog` + config persistence)
 - **`ExternalEditor`** — `Command(content)` for annotation temp-file editing,
@@ -440,6 +477,8 @@ belong to the consumer.
   (default wiring via `ModelConfig.Editor`; stubbed in tests)
 - **`PostFlushHook`** — `Prepare(content)`; implemented by `handoff.Runner` (optional wiring via
   `ModelConfig.PostFlushHook`)
+- **`RefSource`** — `Branches()`, `PullRequests()`, `PullRequestRef(n)`, `CheckRef(ref)`; implemented by
+  `refsource.Source` (wired via `ModelConfig.RefSource` for git diffs only; nil disables `switch_ref`)
 
 ## Data Flow
 
@@ -568,8 +607,8 @@ the previous row wins.
 ### Overlay Flow
 
 ```
-User presses '?' / '@' / 'T' / 'P' / 'i'
-  → Model calls overlay.OpenHelp/OpenAnnotList/OpenThemeSelect/OpenFilePicker/OpenInfo
+User presses '?' / '@' / 'T' / 'P' / 'i' / 'b'
+  → Model calls overlay.OpenHelp/OpenAnnotList/OpenThemeSelect/OpenFilePicker/OpenInfo/OpenRefPicker
       (for 'i': review scope is assembled from ReviewInfoConfig and current
        file-load state; aggregate +/- stats are fetched lazily on first open
        via loadReviewStats() and pushed into the open popup with UpdateInfo().
@@ -587,6 +626,8 @@ User presses '?' / '@' / 'T' / 'P' / 'i'
       OutcomeThemeConfirmed → apply theme, persist to config file
       OutcomeThemeCanceled → restore original theme
       OutcomeFileChosen → reveal path in tree, focus diff, load if changed
+      OutcomeRefChosen → resolve (PR fetch / ref check, async) → confirm if annotations
+                         exist → switchRef → triggerReload
       OutcomeClosed → close overlay, resume normal mode
   → Manager.Compose() renders popup over background content
 ```
