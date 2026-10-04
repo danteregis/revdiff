@@ -311,6 +311,14 @@ func TestRefSwitch_AnnotationsRequireConfirmation(t *testing.T) {
 		assert.Equal(t, "Switch canceled", m.transientHint())
 	})
 
+	t.Run("mouse is swallowed while the prompt is pending", func(t *testing.T) {
+		m := setup(t, ModelConfig{})
+		m, cmd := feed(t, m, tea.MouseMsg{X: 5, Y: 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		assert.Nil(t, cmd)
+		require.NotNil(t, m.refs.pending)
+		assert.Contains(t, m.transientHint(), "press y to switch")
+	})
+
 	t.Run("y switches and clears annotations", func(t *testing.T) {
 		m := setup(t, ModelConfig{})
 		m, cmd := pressRune(t, m, 'y')
