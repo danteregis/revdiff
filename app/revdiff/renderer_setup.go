@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/umputun/revdiff/app/diff"
+	"github.com/umputun/revdiff/app/refsource"
 	"github.com/umputun/revdiff/app/ui"
 )
 
@@ -18,6 +19,7 @@ type vcsSetup struct {
 	untrackedFn        func() ([]string, error)
 	untrackedRenamesFn func([]string) ([]diff.FileEntry, error) // git-only; pairs untracked renames with their origin
 	commitLogger       diff.CommitLogger                        // VCS-backed commit log source; nil when VCS lacks the capability
+	refSource          ui.RefSource                             // runtime review switcher; git diffs only, nil otherwise
 }
 
 // setupVCSRenderer detects the VCS and creates the appropriate renderer, blamer, and untracked function.
@@ -35,7 +37,8 @@ func setupVCSRenderer(opts options) (vcsSetup, error) {
 		if err != nil {
 			return vcsSetup{}, err
 		}
-		return vcsSetup{renderer: r, vcsType: diff.VCSGit, gitRoot: vcsRoot, workDir: workDir, blamer: g, untrackedFn: g.UntrackedFiles, untrackedRenamesFn: g.UntrackedRenames, commitLogger: g}, nil
+		return vcsSetup{renderer: r, vcsType: diff.VCSGit, gitRoot: vcsRoot, workDir: workDir, blamer: g, untrackedFn: g.UntrackedFiles,
+			untrackedRenamesFn: g.UntrackedRenames, commitLogger: g, refSource: gitRefSource(opts, vcsRoot)}, nil
 	case diff.VCSHg:
 		if opts.Staged {
 			fmt.Fprintln(os.Stderr, "warning: --staged ignored in mercurial repository (no staging area)")
@@ -63,6 +66,18 @@ func setupVCSRenderer(opts options) (vcsSetup, error) {
 		}
 		return vcsSetup{renderer: r, workDir: workDir}, nil
 	}
+}
+
+// gitRefSource returns the runtime review switcher's source for a git repo, or
+// nil when the review is not a diff that a ref can replace: --all-files lists
+// tracked files rather than changes. (--stdin and --compare-old/--compare-new
+// never reach VCS setup.) --only stays switchable: it narrows whichever diff
+// is shown.
+func gitRefSource(opts options, repoRoot string) ui.RefSource {
+	if opts.AllFiles {
+		return nil
+	}
+	return refsource.New(repoRoot)
 }
 
 // makeGitRenderer selects the appropriate git renderer based on flags.

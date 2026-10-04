@@ -131,6 +131,7 @@ func run(opts options) (int, error) {
 		untrackedFn        func() ([]string, error)
 		untrackedRenamesFn func([]string) ([]diff.FileEntry, error)
 		commitLogger       diff.CommitLogger
+		refSource          ui.RefSource
 		vcsType            diff.VCSType
 		err                error
 	)
@@ -185,6 +186,7 @@ func run(opts options) (int, error) {
 		untrackedFn = filterUntracked(setup.untrackedFn, opts.Include, opts.Exclude)
 		untrackedRenamesFn = setup.untrackedRenamesFn
 		commitLogger = setup.commitLogger
+		refSource = setup.refSource
 		vcsType = setup.vcsType
 	}
 
@@ -231,6 +233,7 @@ func run(opts options) (int, error) {
 		LoadUntrackedRenames: untrackedRenamesFn,
 		Keymap:               km,
 		PostFlushHook:        postFlushHook,
+		RefSource:            refSource,
 		CommitLog:            commitLogger,
 		CommitsApplicable:    commitsApplicable(opts, commitLogger),
 		ReloadApplicable:     reloadApplicable(opts),
@@ -305,8 +308,11 @@ func run(opts options) (int, error) {
 	// EIO that races the guard's QuitMsg — so the history safety net must run
 	// whenever the model is available and the exit was graceful or signaled.
 	if m, ok := finalModel.(ui.Model); ok && (runErr == nil || signaled) {
+		ref, staged := m.ReviewRef()
 		return finalize(finalizeReq{
 			opts:        opts,
+			ref:         ref,
+			staged:      staged,
 			annotations: m.Store().FormatOutput(),
 			files:       m.Store().Files(),
 			discarded:   m.Discarded(),
@@ -343,6 +349,8 @@ func (r tuiOutput) open() (*os.File, error) {
 
 type finalizeReq struct {
 	opts        options
+	ref         string // ref of the review shown at exit (differs from opts after a runtime switch)
+	staged      bool   // staged flag of the review shown at exit
 	annotations string
 	files       []string
 	discarded   bool
@@ -360,7 +368,7 @@ func finalize(r finalizeReq) (int, error) {
 	if r.discarded || r.annotations == "" {
 		return 0, nil
 	}
-	saveHistory(histReq{opts: r.opts, annotations: r.annotations, gitRoot: r.gitRoot, workDir: r.workDir, files: r.files})
+	saveHistory(histReq{opts: r.opts, ref: r.ref, staged: r.staged, annotations: r.annotations, gitRoot: r.gitRoot, workDir: r.workDir, files: r.files})
 	if r.signaled {
 		return 0, nil
 	}

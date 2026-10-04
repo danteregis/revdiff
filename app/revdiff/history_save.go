@@ -8,6 +8,8 @@ import (
 
 type histReq struct {
 	opts        options
+	ref         string // reviewed ref at exit, not opts.ref(): the review may have been switched at runtime
+	staged      bool
 	annotations string
 	gitRoot     string
 	workDir     string
@@ -35,8 +37,8 @@ func saveHistory(r histReq) {
 	history.New(r.opts.HistoryDir).Save(history.Params{
 		Annotations:    r.annotations,
 		Path:           histPath,
-		Ref:            r.opts.ref(),
-		Staged:         r.opts.Staged,
+		Ref:            r.ref,
+		Staged:         r.staged,
 		GitRoot:        r.gitRoot,
 		AnnotatedFiles: r.files,
 		SubDir:         histSubDir,

@@ -23,6 +23,14 @@ func TestMakeGitRenderer_WithOnly(t *testing.T) {
 	assert.Equal(t, dir, workDir)
 }
 
+func TestGitRefSource(t *testing.T) {
+	dir := t.TempDir()
+	assert.NotNil(t, gitRefSource(options{}, dir), "plain diff review is switchable")
+	assert.NotNil(t, gitRefSource(options{Staged: true}, dir), "staged review is switchable")
+	assert.NotNil(t, gitRefSource(options{Only: []string{"a.go"}}, dir), "--only narrows any diff")
+	assert.Nil(t, gitRefSource(options{AllFiles: true}, dir), "--all-files lists files, not a diff")
+}
+
 func TestMakeGitRenderer_WithoutOnly(t *testing.T) {
 	dir := t.TempDir()
 	g := diff.NewGit(dir)
