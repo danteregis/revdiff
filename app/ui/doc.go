@@ -30,7 +30,7 @@
 //     and the ref switch that reloads through triggerReload
 //   - session.go — review sessions: [SessionStore] interface, opening a branch's session (seeding
 //     reviewed marks for fingerprint validation, loading annotations), merge-saving marks, annotation
-//     re-anchoring on file-list loads, delivery marking, new_session
+//     re-anchoring on file-list loads, delivery marking, new_session, the sessions picker
 //   - search.go — incremental search: input handling, match computation, navigation
 //
 // Model mutable state is organized into explicit sub-structs by concern:
@@ -73,7 +73,7 @@
 // ModelConfig.NewFileTree and ModelConfig.ParseTOC factory closures wired in app/revdiff/main.go.
 //
 // Layered popup UI lives in the [overlay] sub-package (app/ui/overlay/).
-// It owns help, annotation list, theme selector, file picker, and review switcher overlays — all popup state
+// It owns help, annotation list, theme selector, file picker, review switcher, and sessions picker overlays — all popup state
 // (cursor, offset, filter text, items, active kind), rendering (box layout,
 // item formatting, border title injection, ANSI-aware centered compositing),
 // and key dispatch (navigation, confirm, cancel, filter input). A Manager

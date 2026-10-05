@@ -108,6 +108,8 @@ type overlayManager interface {
 	OpenFilePicker(spec overlay.FilePickerSpec)
 	OpenRefPicker(spec overlay.RefPickerSpec)
 	UpdateRefPicker(spec overlay.RefPickerSpec)
+	OpenSessions(spec overlay.SessionsSpec)
+	UpdateSessions(spec overlay.SessionsSpec)
 	OpenInfo(spec overlay.InfoSpec)
 	UpdateInfo(spec overlay.InfoSpec)
 	Close()
@@ -1259,6 +1261,10 @@ func (m Model) handleOverlayOpen(action keymap.Action) (tea.Model, tea.Cmd, bool
 		m.clearPendingInputState()
 		cmd := m.openRefSwitcher()
 		return m, cmd, true
+	case keymap.ActionSessions:
+		m.clearPendingInputState()
+		m.openSessionsPicker()
+		return m, nil, true
 	default:
 		return m, nil, false
 	}
@@ -1411,6 +1417,9 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		case overlay.OutcomeRefChosen:
 			model, cmd := m.handleRefChoice(out.RefChoice)
 			return true, model, cmd
+		case overlay.OutcomeSessionAction:
+			cmd := m.handleSessionChoice(out.SessionChoice)
+			return true, m, cmd
 		case overlay.OutcomeClosed, overlay.OutcomeNone:
 		}
 		return true, m, nil

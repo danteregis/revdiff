@@ -3,27 +3,33 @@ package ui
 //go:generate moq -out mocks/session_store.go -pkg mocks -skip-ensure -fmt goimports . SessionStore
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/session"
+	"github.com/umputun/revdiff/app/ui/overlay"
 )
 
 // SessionStore persists review sessions per branch: Open loads (or starts) the
-// session a request selects, Save writes one back. Implemented by
-// *session.Store (git only). Wired through ModelConfig.Sessions; nil disables
-// session persistence entirely.
+// session a request selects, Save writes one back, and List / Rename / Delete
+// back the sessions picker. Implemented by *session.Store (git only). Wired
+// through ModelConfig.Sessions; nil disables session persistence entirely.
 type SessionStore interface {
 	Open(req session.Request) (session.Opened, error)
 	Save(s *session.Session) error
+	List(branch string) ([]session.Summary, error)
+	Rename(branch, id, name string) error
+	Delete(branch, id string) error
 }
 
 // sessionState holds the active review session. present is the set of paths in
@@ -88,6 +94,8 @@ func (m *Model) openSession(req session.Request) {
 	label := m.sessionLabel(sess)
 	m.session.noteCounts = opened.Resumed
 	switch {
+	case opened.InheritedFrom != "":
+		m.session.note = "Started from the session of " + m.oneLine(opened.InheritedFrom) + " (new session " + label + ")"
 	case opened.Resumed:
 		m.session.note = "Resumed session " + label
 	case req.Fresh:
@@ -344,6 +352,122 @@ func (m *Model) applyReanchored(msg filesLoadedMsg, entries []diff.FileEntry) {
 		m.tree.RefreshFilter(m.annotatedFiles())
 	}
 	m.saveSession()
+}
+
+// openSessionsPicker opens the sessions overlay for the current branch.
+func (m *Model) openSessionsPicker() {
+	if !m.sessionsActive() {
+		m.session.hint = "Review sessions are not available in this mode"
+		return
+	}
+	m.overlay.OpenSessions(m.buildSessionsSpec())
+}
+
+// buildSessionsSpec lists the current branch's sessions for the picker. The
+// active session is always listed, even before it has been written.
+func (m Model) buildSessionsSpec() overlay.SessionsSpec {
+	cur := m.session.cur
+	spec := overlay.SessionsSpec{Branch: cur.Branch, ActiveID: cur.ID}
+	list, err := m.session.store.List(cur.Branch)
+	if err != nil {
+		spec.Notice = "sessions unavailable: " + m.oneLine(err.Error())
+	}
+	activeListed := false
+	now := time.Now()
+	for _, s := range list {
+		if s.ID == cur.ID {
+			activeListed = true
+		}
+		spec.Items = append(spec.Items, overlay.SessionItem{ID: s.ID, Label: m.sessionItemLabel(s.Name, s.ID), Detail: m.sessionItemDetail(s, now)})
+	}
+	if !activeListed {
+		active := overlay.SessionItem{ID: cur.ID, Label: m.sessionItemLabel(cur.Name, cur.ID), Detail: "current · not saved yet"}
+		spec.Items = append([]overlay.SessionItem{active}, spec.Items...)
+	}
+	return spec
+}
+
+func (m Model) sessionItemLabel(name, id string) string {
+	if name != "" {
+		return name
+	}
+	return id
+}
+
+// sessionItemDetail summarizes a session for its picker row.
+func (m Model) sessionItemDetail(s session.Summary, now time.Time) string {
+	parts := []string{"updated " + diff.RelativeAge(s.Updated, now) + " ago", fmt.Sprintf("%d reviewed", s.Reviewed)}
+	if s.Open > 0 {
+		parts = append(parts, fmt.Sprintf("%d open", s.Open))
+	}
+	if s.Outdated > 0 {
+		parts = append(parts, fmt.Sprintf("%d outdated", s.Outdated))
+	}
+	if s.Resolved > 0 {
+		parts = append(parts, fmt.Sprintf("%d resolved", s.Resolved))
+	}
+	if s.InheritedFrom != "" {
+		parts = append(parts, "from "+s.InheritedFrom)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// handleSessionChoice performs a sessions-picker action. Switching opens the
+// chosen session and reloads, so its marks and annotations are validated
+// against the current diff like on startup; the session being left was saved
+// on every change. Rename and delete refresh the still-open picker.
+func (m *Model) handleSessionChoice(c *overlay.SessionChoice) tea.Cmd {
+	if c == nil || !m.sessionsActive() {
+		return nil
+	}
+	cur := m.session.cur
+	switch c.Action {
+	case overlay.SessionSelect:
+		if c.ID == cur.ID {
+			m.session.hint = "Already in this session"
+			return nil
+		}
+		m.applyReloadCleanup()
+		m.session.present = nil
+		m.openSession(session.Request{Ref: m.cfg.ref, Staged: m.cfg.staged, Branch: cur.Branch, ID: c.ID})
+		return m.triggerReload()
+	case overlay.SessionNew:
+		m.startNewSession()
+		return nil
+	case overlay.SessionRename:
+		var err error
+		if c.ID == cur.ID {
+			// the active session may not be on disk yet, so its name is saved with it
+			cur.Name = strings.TrimSpace(c.Name)
+			m.saveSession()
+		} else {
+			err = m.session.store.Rename(cur.Branch, c.ID, c.Name)
+		}
+		m.refreshSessionsPicker("rename", err)
+		return nil
+	case overlay.SessionDelete:
+		var err error
+		if c.ID == cur.ID {
+			err = errors.New("the session in use cannot be deleted")
+		} else {
+			err = m.session.store.Delete(cur.Branch, c.ID)
+		}
+		m.refreshSessionsPicker("delete", err)
+		return nil
+	default:
+		return nil
+	}
+}
+
+// refreshSessionsPicker re-lists the open sessions picker after a rename or
+// delete, showing a failure of op as the picker's notice.
+func (m *Model) refreshSessionsPicker(op string, err error) {
+	spec := m.buildSessionsSpec()
+	if err != nil {
+		log.Printf("[WARN] %s session: %v", op, err)
+		spec.Notice = op + " failed: " + m.oneLine(err.Error())
+	}
+	m.overlay.UpdateSessions(spec)
 }
 
 // handleNewSession starts a fresh session for the current branch, asking for

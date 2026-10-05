@@ -14,21 +14,26 @@ import (
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/session"
 	"github.com/umputun/revdiff/app/ui/mocks"
+	"github.com/umputun/revdiff/app/ui/overlay"
 )
 
 // fakeSessionStore keeps the latest session per branch in memory and records
 // every Open request and every saved snapshot.
 type fakeSessionStore struct {
-	byBranch map[string]*session.Session
-	opens    []session.Request
-	saves    []session.Session
-	openErr  error
-	saveErr  error
-	mismatch bool
+	byBranch  map[string]*session.Session   // latest session per branch (what a plain Open resumes)
+	others    map[string][]*session.Session // older sessions per branch, listed after the latest
+	opens     []session.Request
+	saves     []session.Session
+	renames   []string
+	deletes   []string
+	openErr   error
+	saveErr   error
+	mismatch  bool
+	inherited string // InheritedFrom reported by a plain Open that finds nothing
 }
 
 func newFakeSessionStore() *fakeSessionStore {
-	return &fakeSessionStore{byBranch: map[string]*session.Session{}}
+	return &fakeSessionStore{byBranch: map[string]*session.Session{}, others: map[string][]*session.Session{}}
 }
 
 func (f *fakeSessionStore) Open(req session.Request) (session.Opened, error) {
@@ -40,11 +45,63 @@ func (f *fakeSessionStore) Open(req session.Request) (session.Opened, error) {
 	if branch == "" {
 		branch = "feature"
 	}
+	if req.ID != "" {
+		for _, s := range f.branchSessions(branch) {
+			if s.ID == req.ID {
+				return session.Opened{Session: cloneSession(s), Resumed: true}, nil
+			}
+		}
+		return session.Opened{}, errors.New("no such session")
+	}
 	if s, ok := f.byBranch[branch]; ok && !req.Fresh {
 		cp := cloneSession(s)
 		return session.Opened{Session: cp, Resumed: true, FingerprintMismatch: f.mismatch}, nil
 	}
+	if f.inherited != "" && !req.Fresh {
+		return session.Opened{Session: &session.Session{ID: "child", Branch: branch, InheritedFrom: f.inherited,
+			Reviewed: map[string]string{}}, Resumed: true, InheritedFrom: f.inherited}, nil
+	}
 	return session.Opened{Session: &session.Session{ID: "new", Branch: branch, Name: req.Name, Reviewed: map[string]string{}}}, nil
+}
+
+func (f *fakeSessionStore) branchSessions(branch string) []*session.Session {
+	var out []*session.Session
+	if s, ok := f.byBranch[branch]; ok {
+		out = append(out, s)
+	}
+	return append(out, f.others[branch]...)
+}
+
+func (f *fakeSessionStore) List(branch string) ([]session.Summary, error) {
+	sessions := f.branchSessions(branch)
+	out := make([]session.Summary, 0, len(sessions))
+	for _, s := range sessions {
+		out = append(out, session.Summary{ID: s.ID, Name: s.Name, Reviewed: len(s.Reviewed), Open: len(s.Annotations)})
+	}
+	return out, nil
+}
+
+func (f *fakeSessionStore) Rename(branch, id, name string) error {
+	f.renames = append(f.renames, branch+"/"+id+"="+name)
+	for _, s := range f.branchSessions(branch) {
+		if s.ID == id {
+			s.Name = name
+			return nil
+		}
+	}
+	return errors.New("no such session")
+}
+
+func (f *fakeSessionStore) Delete(branch, id string) error {
+	f.deletes = append(f.deletes, branch+"/"+id)
+	kept := f.others[branch][:0]
+	for _, s := range f.others[branch] {
+		if s.ID != id {
+			kept = append(kept, s)
+		}
+	}
+	f.others[branch] = kept
+	return nil
 }
 
 func (f *fakeSessionStore) Save(s *session.Session) error {
@@ -656,4 +713,116 @@ func TestSession_AnnotationListShowsStatus(t *testing.T) {
 	assert.Equal(t, "resolved", items[2].Status)
 	assert.Empty(t, items[3].Status)
 	assert.Contains(t, m.statusBarText(), "1 outdated")
+}
+
+func TestSession_InheritedNote(t *testing.T) {
+	store := newFakeSessionStore()
+	store.inherited = "feature"
+	m := sessionModel(t, store, []string{"a.go", "b.go"}, ModelConfig{})
+	m = loadAll(t, m)
+	assert.Equal(t, "Started from the session of feature (new session for feature) · 0 reviewed", m.transientHint())
+}
+
+func TestSession_PickerOpenAndSwitch(t *testing.T) {
+	diffs := annotationDiffs()
+	store := newFakeSessionStore()
+	store.byBranch["feature"] = &session.Session{ID: "s1", Branch: "feature", Name: "current", Reviewed: map[string]string{},
+		Annotations: []annotation.Annotation{{File: "a.go", Line: 0, Comment: "current round"}}}
+	store.others["feature"] = []*session.Session{{ID: "s0", Branch: "feature", Reviewed: map[string]string{},
+		Annotations: []annotation.Annotation{{File: "a.go", Line: 0, Comment: "earlier round"}}}}
+	m := sessionModelWith(t, store, diffs, []string{"a.go", "b.go"}, ModelConfig{})
+	m = loadAll(t, m)
+
+	m, _ = pressRune(t, m, 'S')
+	require.Equal(t, overlay.KindSessions, m.overlay.Kind())
+	spec := m.buildSessionsSpec()
+	assert.Equal(t, "s1", spec.ActiveID)
+	require.Len(t, spec.Items, 2)
+	assert.Equal(t, "current", spec.Items[0].Label)
+	assert.Equal(t, "s0", spec.Items[1].Label, "an unnamed session shows its id")
+	assert.Contains(t, spec.Items[0].Detail, "1 open")
+
+	m, _ = feed(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m, cmd := feed(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd, "switching reloads to validate the session")
+	assert.False(t, m.overlay.Active())
+	assert.Equal(t, "s0", m.session.cur.ID)
+	assert.Equal(t, session.Request{Branch: "feature", ID: "s0"}, store.opens[len(store.opens)-1])
+	assert.Equal(t, "earlier round", m.store.Get("a.go")[0].Comment)
+	m = settle(t, m, cmd)
+	assert.Contains(t, m.transientHint(), "Resumed session for feature")
+
+	t.Run("selecting the active session is a no-op", func(t *testing.T) {
+		m2, _ := pressRune(t, m, 'S')
+		m2, cmd := feed(t, m2, tea.KeyMsg{Type: tea.KeyEnter})
+		assert.Nil(t, cmd)
+		assert.Equal(t, "Already in this session", m2.transientHint())
+	})
+}
+
+func TestSession_PickerNewRenameDelete(t *testing.T) {
+	store := newFakeSessionStore()
+	store.byBranch["feature"] = &session.Session{ID: "s1", Branch: "feature", Reviewed: map[string]string{"a.go": sessionTestFingerprint("a.go")}}
+	store.others["feature"] = []*session.Session{{ID: "s0", Branch: "feature", Reviewed: map[string]string{}}}
+	m := sessionModel(t, store, []string{"a.go", "b.go"}, ModelConfig{})
+	m = loadAll(t, m)
+	require.True(t, m.tree.IsReviewed("a.go"))
+
+	// rename the inactive session
+	m, _ = pressRune(t, m, 'S')
+	m, _ = feed(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = pressRune(t, m, 'r')
+	for _, r := range "old round" {
+		m, _ = pressRune(t, m, r)
+	}
+	m, _ = feed(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Equal(t, []string{"feature/s0=old round"}, store.renames)
+	assert.True(t, m.overlay.Active(), "the picker stays open")
+	assert.Equal(t, "old round", m.buildSessionsSpec().Items[1].Label)
+
+	// rename the active one: saved with the session
+	m, _ = feed(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	m, _ = pressRune(t, m, 'r')
+	for _, r := range "now" {
+		m, _ = pressRune(t, m, r)
+	}
+	m, _ = feed(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Equal(t, "now", m.session.cur.Name)
+	assert.Equal(t, "now", store.lastSave(t).Name)
+
+	// delete the inactive one
+	m, _ = feed(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m, _ = pressRune(t, m, 'd')
+	m, _ = pressRune(t, m, 'y')
+	assert.Equal(t, []string{"feature/s0"}, store.deletes)
+	assert.Len(t, m.buildSessionsSpec().Items, 1)
+
+	// the active one cannot be deleted even if asked directly
+	cmd := m.handleSessionChoice(&overlay.SessionChoice{Action: overlay.SessionDelete, ID: "s1"})
+	assert.Nil(t, cmd)
+	assert.Equal(t, []string{"feature/s0"}, store.deletes)
+
+	// new session from the picker skips the confirmation
+	m, _ = feed(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = pressRune(t, m, 'S')
+	m, _ = pressRune(t, m, 'n')
+	assert.False(t, m.overlay.Active())
+	assert.Equal(t, "new", m.session.cur.ID)
+	assert.False(t, m.tree.IsReviewed("a.go"))
+}
+
+func TestSession_PickerUnavailableWithoutSessions(t *testing.T) {
+	m := sessionModel(t, nil, []string{"a.go", "b.go"}, ModelConfig{})
+	m, _ = pressRune(t, m, 'S')
+	assert.False(t, m.overlay.Active())
+	assert.Equal(t, "Review sessions are not available in this mode", m.transientHint())
+}
+
+func TestSession_PickerListsUnsavedActiveSession(t *testing.T) {
+	store := newFakeSessionStore()
+	m := sessionModel(t, store, []string{"a.go", "b.go"}, ModelConfig{})
+	spec := m.buildSessionsSpec()
+	require.Len(t, spec.Items, 1)
+	assert.Equal(t, "new", spec.Items[0].ID)
+	assert.Equal(t, "current · not saved yet", spec.Items[0].Detail)
 }

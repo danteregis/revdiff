@@ -15,8 +15,17 @@ import (
 //
 //		// make and configure a mocked ui.SessionStore
 //		mockedSessionStore := &SessionStoreMock{
+//			DeleteFunc: func(branch string, id string) error {
+//				panic("mock out the Delete method")
+//			},
+//			ListFunc: func(branch string) ([]session.Summary, error) {
+//				panic("mock out the List method")
+//			},
 //			OpenFunc: func(req session.Request) (session.Opened, error) {
 //				panic("mock out the Open method")
+//			},
+//			RenameFunc: func(branch string, id string, name string) error {
+//				panic("mock out the Rename method")
 //			},
 //			SaveFunc: func(s *session.Session) error {
 //				panic("mock out the Save method")
@@ -28,18 +37,48 @@ import (
 //
 //	}
 type SessionStoreMock struct {
+	// DeleteFunc mocks the Delete method.
+	DeleteFunc func(branch string, id string) error
+
+	// ListFunc mocks the List method.
+	ListFunc func(branch string) ([]session.Summary, error)
+
 	// OpenFunc mocks the Open method.
 	OpenFunc func(req session.Request) (session.Opened, error)
+
+	// RenameFunc mocks the Rename method.
+	RenameFunc func(branch string, id string, name string) error
 
 	// SaveFunc mocks the Save method.
 	SaveFunc func(s *session.Session) error
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// Delete holds details about calls to the Delete method.
+		Delete []struct {
+			// Branch is the branch argument value.
+			Branch string
+			// ID is the id argument value.
+			ID string
+		}
+		// List holds details about calls to the List method.
+		List []struct {
+			// Branch is the branch argument value.
+			Branch string
+		}
 		// Open holds details about calls to the Open method.
 		Open []struct {
 			// Req is the req argument value.
 			Req session.Request
+		}
+		// Rename holds details about calls to the Rename method.
+		Rename []struct {
+			// Branch is the branch argument value.
+			Branch string
+			// ID is the id argument value.
+			ID string
+			// Name is the name argument value.
+			Name string
 		}
 		// Save holds details about calls to the Save method.
 		Save []struct {
@@ -47,8 +86,79 @@ type SessionStoreMock struct {
 			S *session.Session
 		}
 	}
-	lockOpen sync.RWMutex
-	lockSave sync.RWMutex
+	lockDelete sync.RWMutex
+	lockList   sync.RWMutex
+	lockOpen   sync.RWMutex
+	lockRename sync.RWMutex
+	lockSave   sync.RWMutex
+}
+
+// Delete calls DeleteFunc.
+func (mock *SessionStoreMock) Delete(branch string, id string) error {
+	if mock.DeleteFunc == nil {
+		panic("SessionStoreMock.DeleteFunc: method is nil but SessionStore.Delete was just called")
+	}
+	callInfo := struct {
+		Branch string
+		ID     string
+	}{
+		Branch: branch,
+		ID:     id,
+	}
+	mock.lockDelete.Lock()
+	mock.calls.Delete = append(mock.calls.Delete, callInfo)
+	mock.lockDelete.Unlock()
+	return mock.DeleteFunc(branch, id)
+}
+
+// DeleteCalls gets all the calls that were made to Delete.
+// Check the length with:
+//
+//	len(mockedSessionStore.DeleteCalls())
+func (mock *SessionStoreMock) DeleteCalls() []struct {
+	Branch string
+	ID     string
+} {
+	var calls []struct {
+		Branch string
+		ID     string
+	}
+	mock.lockDelete.RLock()
+	calls = mock.calls.Delete
+	mock.lockDelete.RUnlock()
+	return calls
+}
+
+// List calls ListFunc.
+func (mock *SessionStoreMock) List(branch string) ([]session.Summary, error) {
+	if mock.ListFunc == nil {
+		panic("SessionStoreMock.ListFunc: method is nil but SessionStore.List was just called")
+	}
+	callInfo := struct {
+		Branch string
+	}{
+		Branch: branch,
+	}
+	mock.lockList.Lock()
+	mock.calls.List = append(mock.calls.List, callInfo)
+	mock.lockList.Unlock()
+	return mock.ListFunc(branch)
+}
+
+// ListCalls gets all the calls that were made to List.
+// Check the length with:
+//
+//	len(mockedSessionStore.ListCalls())
+func (mock *SessionStoreMock) ListCalls() []struct {
+	Branch string
+} {
+	var calls []struct {
+		Branch string
+	}
+	mock.lockList.RLock()
+	calls = mock.calls.List
+	mock.lockList.RUnlock()
+	return calls
 }
 
 // Open calls OpenFunc.
@@ -80,6 +190,46 @@ func (mock *SessionStoreMock) OpenCalls() []struct {
 	mock.lockOpen.RLock()
 	calls = mock.calls.Open
 	mock.lockOpen.RUnlock()
+	return calls
+}
+
+// Rename calls RenameFunc.
+func (mock *SessionStoreMock) Rename(branch string, id string, name string) error {
+	if mock.RenameFunc == nil {
+		panic("SessionStoreMock.RenameFunc: method is nil but SessionStore.Rename was just called")
+	}
+	callInfo := struct {
+		Branch string
+		ID     string
+		Name   string
+	}{
+		Branch: branch,
+		ID:     id,
+		Name:   name,
+	}
+	mock.lockRename.Lock()
+	mock.calls.Rename = append(mock.calls.Rename, callInfo)
+	mock.lockRename.Unlock()
+	return mock.RenameFunc(branch, id, name)
+}
+
+// RenameCalls gets all the calls that were made to Rename.
+// Check the length with:
+//
+//	len(mockedSessionStore.RenameCalls())
+func (mock *SessionStoreMock) RenameCalls() []struct {
+	Branch string
+	ID     string
+	Name   string
+} {
+	var calls []struct {
+		Branch string
+		ID     string
+		Name   string
+	}
+	mock.lockRename.RLock()
+	calls = mock.calls.Rename
+	mock.lockRename.RUnlock()
 	return calls
 }
 

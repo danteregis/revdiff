@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -160,6 +161,43 @@ func (g gitRunner) tipCommit(ref string) string {
 		return ""
 	}
 	return strings.TrimSpace(out)
+}
+
+// ancestorDistance reports whether commit from is an ancestor of (or equal to)
+// commit to and, if so, how many commits lie between them.
+func (g gitRunner) ancestorDistance(from, to string) (int, bool) {
+	if from == "" || to == "" || strings.HasPrefix(from, "-") || strings.HasPrefix(to, "-") {
+		return 0, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	if _, err := g.run(ctx, "merge-base", "--is-ancestor", from, to); err != nil {
+		return 0, false
+	}
+	out, err := g.run(ctx, "rev-list", "--count", from+".."+to)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// isBaseBranch reports whether branch is one of the repository's base
+// branches: main, master, or the branch origin's HEAD points at.
+func (g gitRunner) isBaseBranch(branch string) bool {
+	if branch == "main" || branch == "master" {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	out, err := g.run(ctx, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return false
+	}
+	return strings.TrimPrefix(strings.TrimSpace(out), "origin/") == branch
 }
 
 func (g gitRunner) refExists(ctx context.Context, ref string) bool {

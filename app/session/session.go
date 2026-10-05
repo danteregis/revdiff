@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,8 +38,13 @@ import (
 	"github.com/umputun/revdiff/app/fsutil"
 )
 
-// schemaVersion is the session file format version written by this revdiff.
-const schemaVersion = 1
+const (
+	// schemaVersion is the session file format version written by this revdiff.
+	schemaVersion = 1
+	// maxInheritCandidates caps how many other-branch sessions are checked for
+	// ancestry when a branch has no session yet; each costs a git call.
+	maxInheritCandidates = 20
+)
 
 // Session is one persisted review of a branch.
 type Session struct {
@@ -52,6 +58,9 @@ type Session struct {
 	Branch             string    `json:"branch"`
 	Ref                string    `json:"ref,omitempty"`  // reviewed ref when last saved; empty for working-tree review
 	Head               string    `json:"head,omitempty"` // commit at the tip of the reviewed ref when last saved
+	// InheritedFrom names the branch whose session this one was copied from
+	// when the branch had none of its own; empty otherwise.
+	InheritedFrom string `json:"inherited_from,omitempty"`
 	// Reviewed maps a path to the semantic diff fingerprint (diff.FileFingerprint)
 	// of the content the reviewer approved. A path whose current fingerprint
 	// differs is "changed since review".
@@ -72,6 +81,7 @@ type Request struct {
 	Staged bool   // staged review (resolves to the current branch like working-tree review)
 	Branch string // branch key override, e.g. a pull request's head branch; empty derives it from Ref
 	Name   string // resume the session with this name, or create it
+	ID     string // resume exactly this session of the branch (error when it does not exist)
 	Fresh  bool   // start a new session even when one exists for the branch
 }
 
@@ -84,6 +94,21 @@ type Opened struct {
 	// computed by a different fingerprint version, so they cannot be verified
 	// and every one of them will read as changed since review.
 	FingerprintMismatch bool
+	// InheritedFrom names the branch whose session was copied because this
+	// branch had none; the copy is already saved. Empty otherwise.
+	InheritedFrom string
+}
+
+// Summary describes one stored session for the sessions picker.
+type Summary struct {
+	ID            string
+	Name          string
+	Updated       time.Time
+	InheritedFrom string
+	Reviewed      int // reviewed marks
+	Open          int // open annotations (pending or delivered)
+	Outdated      int // outdated annotations
+	Resolved      int // resolved annotations
 }
 
 // Store reads and writes the sessions of one repository.
@@ -128,10 +153,13 @@ func DefaultRoot() string {
 	return filepath.Join(home, ".config", "revdiff", "sessions")
 }
 
-// Open returns the session req selects: a fresh one when req.Fresh, the named
-// one (created when missing) when req.Name is set, and otherwise the most
-// recently updated session of the branch, or a new one when the branch has
-// none. A new session is not written until it has state (see Save).
+// Open returns the session req selects: a fresh one when req.Fresh, exactly
+// req.ID when set, the named one (created when missing) when req.Name is set,
+// and otherwise the most recently updated session of the branch. A branch with
+// no session at all inherits one: the nearest session of another branch whose
+// saved head is an ancestor of this branch's tip is copied into a new session
+// for this branch (see inherit). Failing that a new session is returned, which
+// is not written until it has state (see Save).
 func (s *Store) Open(req Request) (Opened, error) {
 	branch := strings.TrimSpace(req.Branch)
 	if branch == "" {
@@ -139,7 +167,11 @@ func (s *Store) Open(req Request) (Opened, error) {
 	}
 	head := s.git.tipCommit(req.Ref)
 
-	if found := s.existing(branch, req); found != nil {
+	sessions := s.list(branch)
+	if req.ID != "" && !req.Fresh && s.byID(sessions, req.ID) == nil {
+		return Opened{}, fmt.Errorf("session %q not found", req.ID)
+	}
+	if found := s.existing(sessions, req); found != nil {
 		found.Ref = req.Ref
 		if head != "" {
 			found.Head = head
@@ -147,23 +179,147 @@ func (s *Store) Open(req Request) (Opened, error) {
 		mismatch := len(found.Reviewed) > 0 && found.FingerprintVersion != diff.FileFingerprintVersion
 		return Opened{Session: found, Resumed: true, FingerprintMismatch: mismatch}, nil
 	}
+	if !req.Fresh && req.Name == "" && len(sessions) == 0 && head != "" {
+		if inherited := s.inherit(branch, req.Ref, head); inherited != nil {
+			mismatch := len(inherited.Reviewed) > 0 && inherited.FingerprintVersion != diff.FileFingerprintVersion
+			return Opened{Session: inherited, Resumed: true, FingerprintMismatch: mismatch, InheritedFrom: inherited.InheritedFrom}, nil
+		}
+	}
 	return Opened{Session: s.newSession(branch, req.Name, req.Ref, head)}, nil
 }
 
-// existing returns the stored session req resumes on branch, or nil when it
-// asks for a fresh one or none matches.
-func (s *Store) existing(branch string, req Request) *Session {
-	if req.Fresh {
+// existing returns the stored session req resumes among sessions (one branch,
+// newest first), or nil when it asks for a fresh one or none matches.
+func (s *Store) existing(sessions []*Session, req Request) *Session {
+	switch {
+	case req.Fresh:
 		return nil
-	}
-	sessions := s.list(branch)
-	if req.Name != "" {
+	case req.ID != "":
+		return s.byID(sessions, req.ID)
+	case req.Name != "":
 		return s.byName(sessions, req.Name)
+	case len(sessions) == 0:
+		return nil
+	default:
+		return sessions[0]
 	}
-	if len(sessions) == 0 {
+}
+
+func (s *Store) byID(sessions []*Session, id string) *Session {
+	for _, sess := range sessions {
+		if sess.ID == id {
+			return sess
+		}
+	}
+	return nil
+}
+
+// inherit copies the session of the nearest ancestor branch into a new session
+// for branch, so a branch cut from a reviewed one starts with its review. It
+// considers the most recently updated session of every other branch (at most
+// maxInheritCandidates of them, newest first), keeps those whose saved head is
+// an ancestor of tip, and picks the one with the fewest commits between its
+// head and tip (the most recently updated on a tie). The parent is left
+// untouched; the copy is saved immediately. The repository's base branches
+// (main, master, origin's HEAD) never inherit: a branch merged into them would
+// otherwise hand its review to the base. Returns nil when nothing qualifies.
+func (s *Store) inherit(branch, ref, tip string) *Session {
+	if s.git.isBaseBranch(branch) {
 		return nil
 	}
-	return sessions[0]
+	dirs, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil
+	}
+	own := escapeBranch(branch)
+	var candidates []*Session
+	for _, d := range dirs {
+		if !d.IsDir() || d.Name() == own {
+			continue
+		}
+		key, uerr := unescapeBranch(d.Name())
+		if uerr != nil {
+			continue
+		}
+		if sessions := s.list(key); len(sessions) > 0 && sessions[0].Head != "" && !sessions[0].empty() {
+			candidates = append(candidates, sessions[0])
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Updated.After(candidates[j].Updated) })
+	if len(candidates) > maxInheritCandidates {
+		candidates = candidates[:maxInheritCandidates]
+	}
+
+	var parent *Session
+	best := -1
+	for _, c := range candidates {
+		dist, ok := s.git.ancestorDistance(c.Head, tip)
+		if !ok || (best >= 0 && dist >= best) {
+			continue
+		}
+		parent, best = c, dist
+	}
+	if parent == nil {
+		return nil
+	}
+
+	child := s.newSession(branch, "", ref, tip)
+	child.InheritedFrom = parent.Branch
+	child.Reviewed = maps.Clone(parent.Reviewed)
+	if child.Reviewed == nil {
+		child.Reviewed = map[string]string{}
+	}
+	child.Annotations = append([]annotation.Annotation(nil), parent.Annotations...)
+	child.FingerprintVersion = parent.FingerprintVersion
+	if err := s.Save(child); err != nil {
+		s.warnLog("[WARN] sessions: save session inherited from %s: %v", parent.Branch, err)
+	}
+	return child
+}
+
+// List returns summaries of every stored session of branch, most recently
+// updated first.
+func (s *Store) List(branch string) ([]Summary, error) {
+	sessions := s.list(branch)
+	out := make([]Summary, 0, len(sessions))
+	for _, sess := range sessions {
+		sum := Summary{ID: sess.ID, Name: sess.Name, Updated: sess.Updated, InheritedFrom: sess.InheritedFrom, Reviewed: len(sess.Reviewed)}
+		for _, a := range sess.Annotations {
+			switch a.Status {
+			case annotation.StatusOutdated:
+				sum.Outdated++
+			case annotation.StatusResolved:
+				sum.Resolved++
+			default:
+				sum.Open++
+			}
+		}
+		out = append(out, sum)
+	}
+	return out, nil
+}
+
+// Rename sets the name of session id of branch.
+func (s *Store) Rename(branch, id, name string) error {
+	sess, err := s.read(s.path(branch, id))
+	if err != nil {
+		return fmt.Errorf("rename session: %w", err)
+	}
+	sess.Branch = branch
+	sess.Name = strings.TrimSpace(name)
+	// keep the update time: renaming must not make a session the one resumed next
+	if err := s.write(sess, false); err != nil {
+		return fmt.Errorf("rename session: %w", err)
+	}
+	return nil
+}
+
+// Delete removes session id of branch from disk.
+func (s *Store) Delete(branch, id string) error {
+	if err := os.Remove(s.path(branch, id)); err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
 }
 
 // Save writes sess atomically, stamping its version fields and update time. A
@@ -171,6 +327,12 @@ func (s *Store) existing(branch string, req Request) *Session {
 // opening revdiff leaves nothing behind; once written, a session is rewritten
 // even when its state becomes empty, so removed marks cannot resurrect.
 func (s *Store) Save(sess *Session) error {
+	return s.write(sess, true)
+}
+
+// write saves sess; stamp sets its update time to now (a review change) while
+// a metadata-only write such as a rename keeps it.
+func (s *Store) write(sess *Session, stamp bool) error {
 	if sess == nil || sess.ID == "" || sess.Branch == "" {
 		return errors.New("save session: incomplete session")
 	}
@@ -186,7 +348,9 @@ func (s *Store) Save(sess *Session) error {
 	sess.Version = schemaVersion
 	sess.FingerprintVersion = diff.FileFingerprintVersion
 	sess.RepoID = s.repoID
-	sess.Updated = s.now().UTC()
+	if stamp || sess.Updated.IsZero() {
+		sess.Updated = s.now().UTC()
+	}
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode session: %w", err)
@@ -302,14 +466,38 @@ func newSessionID(now time.Time) string {
 	return now.UTC().Format("20060102T150405") + "-" + hex.EncodeToString(b[:])
 }
 
+// unescapeBranch is the inverse of escapeBranch.
+func unescapeBranch(name string) (string, error) {
+	name = strings.TrimPrefix(name, "_")
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		if name[i] != '%' {
+			b.WriteByte(name[i])
+			continue
+		}
+		if i+2 >= len(name) {
+			return "", fmt.Errorf("bad escape in %q", name)
+		}
+		v, err := hex.DecodeString(name[i+1 : i+3])
+		if err != nil {
+			return "", fmt.Errorf("bad escape in %q: %w", name, err)
+		}
+		b.Write(v)
+		i += 2
+	}
+	return b.String(), nil
+}
+
 // escapeBranch maps a branch key to a single safe directory name: every byte
 // outside [A-Za-z0-9._-] (including "/") is percent-encoded, and names that
-// would be special path elements get a prefix.
+// would be special path elements get a "_" prefix. A leading "_" of the key
+// itself is encoded, so a leading "_" in the result is always that prefix and
+// unescapeBranch can strip it.
 func escapeBranch(branch string) string {
 	var b strings.Builder
 	for i := range len(branch) {
 		c := branch[i]
-		if isSafeByte(c) {
+		if isSafeByte(c) && (i > 0 || c != '_') {
 			b.WriteByte(c)
 			continue
 		}

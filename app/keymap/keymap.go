@@ -79,6 +79,7 @@ const (
 	ActionQuickPraise            Action = "quick_praise"
 	ActionNewSession             Action = "new_session"
 	ActionResolveAnnotation      Action = "resolve_annotation"
+	ActionSessions               Action = "sessions"
 )
 
 // SectionPane is the help section name for pane-related keybindings.
@@ -112,6 +113,7 @@ var validActions = map[Action]bool{
 	ActionQuickPraise:       true,
 	ActionNewSession:        true,
 	ActionResolveAnnotation: true,
+	ActionSessions:          true,
 }
 
 // deprecatedActionAliases maps obsolete action names parsed from user
@@ -267,6 +269,7 @@ func defaultDescriptions() []HelpEntry {
 		{ActionSwitchRef, "switch review to a branch, PR, or ref", "View"},
 
 		// review sessions
+		{ActionSessions, "review sessions (switch, rename, delete)", "Session"},
 		{ActionNewSession, "start a new review session", "Session"},
 
 		// quit
@@ -336,6 +339,7 @@ func defaultBindings() map[string]Action {
 		"R":      ActionReload,
 		"b":      ActionSwitchRef,
 		"ctrl+n": ActionNewSession,
+		"S":      ActionSessions,
 		"esc":    ActionDismiss,
 	}
 }

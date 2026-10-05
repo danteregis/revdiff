@@ -174,7 +174,7 @@ across files by concern to keep files under ~500 lines:
   `openSession` (startup, ref switch, new session) seeding the tree's reviewed marks for the
   regular fingerprint pipeline to validate and loading the session's annotations into the store,
   `saveSession` merging marks for the paths of the current file list only (annotations are saved
-  whole), `reanchorAnnotations` (inside `loadFiles`, same 4-worker pool) + `applyReanchored`
+  whole), the `S` sessions picker (`openSessionsPicker`, `handleSessionChoice`), `reanchorAnnotations` (inside `loadFiles`, same 4-worker pool) + `applyReanchored`
   (in `handleFilesLoaded`, skipping files edited while the load ran), delivery (`MarkDelivered`)
   and `Q`'s pending-only discard, the resume status note, and the `new_session` action
 - **`search.go`** — search input handling, match computation, navigation
@@ -284,6 +284,11 @@ Layered popup system with mutual exclusivity (one overlay at a time).
   below the list, and `UpdateRefPicker` to swap in async lists while keeping the filter and cursor.
   Shares the file picker's box style and click geometry (`entriesTop=4`); header rows are not
   selectable
+- **`sessionsOverlay`** (`sessions.go`) — review-sessions picker: a `+ New session` row then the
+  branch's sessions (label, muted detail, `●` on the active one). `Enter` / click emits
+  `OutcomeSessionAction` with `SessionSelect` or `SessionNew` (closes); `r` edits a name inline and
+  `d` asks for `y` inside the overlay, then emit `SessionRename` / `SessionDelete`, which keep it open
+  for `UpdateSessions`. Same box style and click geometry as the file picker (`entriesTop=4`)
 - **`infoOverlay`** (`info.go`) — unified info popup (description + session details + commit log).
   Description prose comes from `--description` / `--description-file`, sanitized to strip
   ANSI/control bytes, then highlighted via the markdown chroma path once at `NewModel` time and
@@ -480,6 +485,14 @@ through `ui.SessionStore` (`Open`, `Save`):
   create), or the branch's most recently updated one; a new session when none exists. `Opened`
   reports `Resumed` and `FingerprintMismatch` (the stored `fingerprint_version` differs from
   `diff.FileFingerprintVersion`, so marks cannot be verified).
+- **Inheritance** — a plain resume on a branch with no session copies the nearest ancestor branch's
+  session: the latest session of each other branch (at most 20, newest first) whose saved head is an
+  ancestor of the tip (`git merge-base --is-ancestor`), fewest commits in between (`git rev-list
+  --count`), most recent on a tie. The copy is saved at once with `inherited_from`; the parent is not
+  touched. `main`, `master` and `origin/HEAD`'s branch never inherit.
+- **Picker** — `List(branch)` returns `Summary` rows (counts by status), `Rename` keeps the update
+  time (a rename must not change which session is resumed), `Delete` removes the file, and
+  `Request.ID` opens one exact session.
 - **Annotations** — the session stores the whole annotation store (open, outdated, resolved,
   delivered) with anchors; the UI re-anchors them on every file-list load.
 - **Save** — atomic (`fsutil.AtomicWriteFile`, 0600); stamps schema/fingerprint versions, repo id
@@ -532,7 +545,8 @@ belong to the consumer.
 - **`TOCComponent`** — 9 methods (navigation, cursor/section query+set, scroll-state, render);
   implemented by `sidepane.TOC`
 - **`overlayManager`** — `Active()`, `Kind()`, `OpenHelp()`, `OpenAnnotList()`, `OpenThemeSelect()`,
-  `OpenFilePicker()`, `OpenRefPicker()`, `UpdateRefPicker()`, `OpenInfo()`, `UpdateInfo()`,
+  `OpenFilePicker()`, `OpenRefPicker()`, `UpdateRefPicker()`, `OpenSessions()`, `UpdateSessions()`,
+  `OpenInfo()`, `UpdateInfo()`,
   `Close()`, `HandleKey()`, `HandleMouse()`, `Compose()`; implemented by `overlay.Manager`
 - **`ThemeCatalog`** — `Entries()`, `Resolve()`, `Persist()`; implemented by `themeCatalog` adapter
   in `app/revdiff/themes.go` (composes `theme.Catalog` + config persistence)
@@ -543,7 +557,8 @@ belong to the consumer.
   `ModelConfig.PostFlushHook`)
 - **`RefSource`** — `Branches()`, `PullRequests()`, `PullRequestRef(n)`, `CheckRef(ref)`; implemented by
   `refsource.Source` (wired via `ModelConfig.RefSource` for git diffs only; nil disables `switch_ref`)
-- **`SessionStore`** — `Open(req)`, `Save(session)`; implemented by `session.Store` (wired via
+- **`SessionStore`** — `Open(req)`, `Save(session)`, `List(branch)`, `Rename(branch, id, name)`,
+  `Delete(branch, id)`; implemented by `session.Store` (wired via
   `ModelConfig.Sessions` for git diffs only, not with `--all-files` or `--no-session`; nil disables
   persistence and `new_session`)
 
@@ -681,7 +696,7 @@ the previous row wins.
 ### Overlay Flow
 
 ```
-User presses '?' / '@' / 'T' / 'P' / 'i' / 'b'
+User presses '?' / '@' / 'T' / 'P' / 'i' / 'b' / 'S'
   → Model calls overlay.OpenHelp/OpenAnnotList/OpenThemeSelect/OpenFilePicker/OpenInfo/OpenRefPicker
       (for 'i': review scope is assembled from ReviewInfoConfig and current
        file-load state; aggregate +/- stats are fetched lazily on first open
@@ -702,6 +717,7 @@ User presses '?' / '@' / 'T' / 'P' / 'i' / 'b'
       OutcomeFileChosen → reveal path in tree, focus diff, load if changed
       OutcomeRefChosen → resolve (PR fetch / ref check, async) → confirm if annotations
                          exist → switchRef → triggerReload
+      OutcomeSessionAction → select (openSession by id → triggerReload) / new / rename / delete
       OutcomeClosed → close overlay, resume normal mode
   → Manager.Compose() renders popup over background content
 ```

@@ -35,7 +35,7 @@ Built for a specific use case: reviewing code changes, plans, and documents with
 - Scratch-buffer review: annotate arbitrary piped or redirected text with `--stdin`, optionally naming it with `--stdin-name`. When the piped content sniffs as a git unified diff, revdiff parses it as a real multi-file diff (review `gh pr diff` or `git format-patch -1 --stdout` output directly); otherwise the input is shown as a single context-only buffer.
 - Pi package: launch revdiff from pi, capture annotations, and send them to the agent immediately for the normal review loop
 - Review history: auto-saves annotations and diffs to `~/.config/revdiff/history/` on quit as a safety net
-- Review sessions (git): reviewed marks and annotations are saved per branch and resumed on the next run; files whose change moved on since you marked them show `↻` (changed since review), annotations whose line changed become outdated, and each round's output carries only annotations not yet sent to the agent
+- Review sessions (git): reviewed marks and annotations are saved per branch and resumed on the next run (a new branch starts from its parent branch's session; `S` switches, renames, or deletes sessions); files whose change moved on since you marked them show `↻` (changed since review), annotations whose line changed become outdated, and each round's output carries only annotations not yet sent to the agent
 - Fully customizable colors via environment variables, CLI flags, or config file
 - Custom keybindings: remap any key via config file, export defaults with `--dump-keys`
 
@@ -745,6 +745,10 @@ Annotations are part of the session too. Each one remembers the line it was writ
 
 The output — stdout, `-o`, an `O` flush, the post-flush command, and the history file — carries only **pending** annotations: open ones that were not delivered yet. Writing the exit output or flushing with `O` marks them delivered (`[sent]`), so the next round sends only what you added or edited since; editing a delivered annotation makes it pending again. `Q` discards only the pending annotations (from the session too); delivered, outdated and resolved ones stay. With a session, `R` keeps annotations and re-anchors them, and `b` keeps each branch's annotations in that branch's session, so neither asks for confirmation. `--annotations FILE` replaces the session's annotations for that run, and the loaded annotations become part of the session. Without a session (`--no-session`, `--stdin`, compare mode, Mercurial, Jujutsu) annotations behave as before: `R` and `b` drop them after a confirmation and `O` re-flushes the full set.
 
+Press `S` (`sessions`) to open the sessions picker for the current branch: each session shows its name (or id), when it was last updated, and its reviewed / open / outdated / resolved counts, with `●` on the one in use. `Enter` switches to the selected session (revdiff reloads and validates its marks and annotations against the current diff), the `+ New session` row or `n` starts a fresh one, `r` renames the selected session (the name then works with `--session=NAME`), and `d` deletes it after a `y` confirmation — the session in use cannot be deleted. Arrow keys or the mouse wheel move, a click picks a row, and `Esc` closes.
+
+When a branch has no session yet, revdiff looks at the latest session of every other branch of the repository (up to 20, newest first) and, when one was saved at a commit that is an ancestor of this branch's tip, copies the nearest one (fewest commits in between) into a new session for this branch, so a branch cut from a reviewed branch starts with that review (`Started from the session of feature`). The parent session is left untouched. `main`, `master` and the branch `origin/HEAD` points at never inherit, so merging a reviewed branch does not hand its review to the base; `--session=new` and `--session=NAME` skip inheritance.
+
 Press `Ctrl+N` (`new_session`) to start a fresh session for the current branch; when marks or annotations exist, revdiff asks for `y` first. Previous sessions stay on disk. From the command line, `--session=new` starts fresh, `--session=NAME` resumes or creates a named session (e.g. one per review round), and `--no-session` turns persistence off (also `REVDIFF_SESSION` / `REVDIFF_NO_SESSION`, or `session` / `no-session` in the config file).
 
 Sessions are stored as JSON under `~/.config/revdiff/sessions/<repo>-<hash>/<branch>/<id>.json`, written atomically (mode `0600`) on every change, so a crash or a signal loses nothing; a session that never had any state is never written. The repository directory is keyed by a hash of the `origin` URL (or of the git common directory when there is no `origin`), so separate clones and worktrees of one project share sessions and same-named checkouts never collide. Each file records the fingerprint version; marks saved by a revdiff with a different fingerprint algorithm cannot be verified and are shown as changed since review. Sessions are not used with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in Mercurial and Jujutsu repositories.
@@ -856,6 +860,7 @@ Press `Space` to mark the focused file reviewed. Press `F` to toggle the sidebar
 
 | Key | Action |
 |-----|--------|
+| `S` | Open the review sessions picker: switch, start, rename, or delete sessions of the current branch (git only) |
 | `Ctrl+N` | Start a new review session for the current branch (git only; confirms if marks or annotations exist) |
 
 ### Switching the Reviewed Diff
@@ -984,7 +989,7 @@ When the leader is pressed, the status bar shows `Pending: ctrl+w, esc to cancel
 
 **View:** `toggle_collapsed`, `toggle_compact`, `toggle_wrap`, `toggle_tree`, `toggle_line_numbers`, `toggle_blame`, `toggle_word_diff`, `toggle_hunk`, `toggle_untracked`, `mark_reviewed`, `filter_unreviewed`, `theme_select`, `filter`, `info`, `reload`, `switch_ref`
 
-**Session:** `new_session`
+**Session:** `sessions`, `new_session`
 
 **Quit:** `quit`, `discard_quit`, `help`, `dismiss`
 

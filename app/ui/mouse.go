@@ -217,6 +217,9 @@ func (m Model) handleOverlayMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.jumpToFile(out.FileChoice.Path)
 	case overlay.OutcomeRefChosen:
 		return m.handleRefChoice(out.RefChoice)
+	case overlay.OutcomeSessionAction:
+		cmd := m.handleSessionChoice(out.SessionChoice)
+		return m, cmd
 	case overlay.OutcomeClosed, overlay.OutcomeNone:
 	}
 	return m, nil

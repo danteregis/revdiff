@@ -361,7 +361,151 @@ func TestEscapeBranch(t *testing.T) {
 	assert.Equal(t, "_..", escapeBranch(".."))
 	assert.Equal(t, "_", escapeBranch(""))
 	assert.Equal(t, "a%25b", escapeBranch("a%b"))
+	assert.Equal(t, "%5Ftmp", escapeBranch("_tmp"))
 	assert.NotEqual(t, escapeBranch("a/b"), escapeBranch("a_b"))
+	for _, b := range []string{"feature/x", "..", ".", "", "a%b", "_tmp", "a_b", "über/ß", "x y"} {
+		got, err := unescapeBranch(escapeBranch(b))
+		require.NoError(t, err)
+		assert.Equal(t, b, got)
+	}
+	_, err := unescapeBranch("bad%2")
+	require.Error(t, err)
+	_, err = unescapeBranch("bad%zz")
+	require.Error(t, err)
+}
+
+// saveSessionOn saves a fresh session for branch with one reviewed mark and
+// one annotation on file mark, at the current HEAD, and returns it.
+func saveSessionOn(t *testing.T, s *Store, branch, mark string) *Session {
+	t.Helper()
+	opened, err := s.Open(Request{Branch: branch, Fresh: true})
+	require.NoError(t, err)
+	opened.Session.Reviewed[mark] = "fp-" + mark
+	opened.Session.Annotations = []annotation.Annotation{{File: mark, Line: 1, Type: "+", Comment: "on " + branch}}
+	require.NoError(t, s.Save(opened.Session))
+	return opened.Session
+}
+
+func TestStore_Inherit(t *testing.T) {
+	t.Run("a branch cut from a reviewed branch starts from its session", func(t *testing.T) {
+		repo := newRepo(t) // on feature
+		s := newTestStore(t, repo)
+		parent := saveSessionOn(t, s, "feature", "b.txt")
+		gitIn(t, repo, "checkout", "-q", "-b", "feature-2")
+		commitFile(t, repo, "c.txt", "three\n")
+
+		got, err := s.Open(Request{})
+		require.NoError(t, err)
+		assert.Equal(t, "feature", got.InheritedFrom)
+		assert.True(t, got.Resumed)
+		assert.Equal(t, "feature-2", got.Session.Branch)
+		assert.NotEqual(t, parent.ID, got.Session.ID)
+		assert.Equal(t, map[string]string{"b.txt": "fp-b.txt"}, got.Session.Reviewed)
+		require.Len(t, got.Session.Annotations, 1)
+
+		again, err := s.Open(Request{})
+		require.NoError(t, err)
+		assert.Empty(t, again.InheritedFrom, "the copy was saved, so the next open resumes it")
+		assert.Equal(t, got.Session.ID, again.Session.ID)
+
+		orig, err := s.Open(Request{Branch: "feature"})
+		require.NoError(t, err)
+		assert.Equal(t, parent.ID, orig.Session.ID, "the parent is untouched")
+	})
+
+	t.Run("nearest ancestor wins", func(t *testing.T) {
+		repo := newRepo(t)
+		s := newTestStore(t, repo)
+		gitIn(t, repo, "checkout", "-q", "-b", "mid")
+		commitFile(t, repo, "m.txt", "m\n")
+		saveSessionOn(t, s, "mid", "m.txt")
+		gitIn(t, repo, "checkout", "-q", "feature")
+		saveSessionOn(t, s, "feature", "b.txt") // newer, but further away
+		gitIn(t, repo, "checkout", "-q", "mid")
+		gitIn(t, repo, "checkout", "-q", "-b", "leaf")
+		commitFile(t, repo, "l.txt", "l\n")
+
+		got, err := s.Open(Request{})
+		require.NoError(t, err)
+		assert.Equal(t, "mid", got.InheritedFrom)
+	})
+
+	t.Run("no ancestor, no inheritance", func(t *testing.T) {
+		repo := newRepo(t)
+		s := newTestStore(t, repo)
+		saveSessionOn(t, s, "feature", "b.txt")
+		gitIn(t, repo, "checkout", "-q", "main")
+		gitIn(t, repo, "checkout", "-q", "-b", "other")
+		commitFile(t, repo, "o.txt", "o\n")
+		got, err := s.Open(Request{})
+		require.NoError(t, err)
+		assert.Empty(t, got.InheritedFrom)
+		assert.False(t, got.Resumed)
+	})
+
+	t.Run("base branches and explicit requests never inherit", func(t *testing.T) {
+		repo := newRepo(t)
+		s := newTestStore(t, repo)
+		gitIn(t, repo, "checkout", "-q", "main")
+		saveSessionOn(t, s, "old", "a.txt") // head is main's commit, an ancestor of main
+		got, err := s.Open(Request{})
+		require.NoError(t, err)
+		assert.Empty(t, got.InheritedFrom, "main does not inherit")
+
+		gitIn(t, repo, "checkout", "-q", "-b", "fresh")
+		got, err = s.Open(Request{Fresh: true})
+		require.NoError(t, err)
+		assert.Empty(t, got.InheritedFrom)
+		got, err = s.Open(Request{Name: "x"})
+		require.NoError(t, err)
+		assert.Empty(t, got.InheritedFrom)
+		got, err = s.Open(Request{})
+		require.NoError(t, err)
+		assert.Equal(t, "old", got.InheritedFrom)
+	})
+}
+
+func TestStore_ListRenameDelete(t *testing.T) {
+	repo := newRepo(t)
+	s := newTestStore(t, repo)
+	first := saveSessionOn(t, s, "feature", "b.txt")
+	second, err := s.Open(Request{Fresh: true})
+	require.NoError(t, err)
+	second.Session.Annotations = []annotation.Annotation{
+		{File: "b.txt", Line: 1, Type: "+", Comment: "x"},
+		{File: "b.txt", Line: 2, Type: "+", Comment: "y", Status: annotation.StatusOutdated},
+		{File: "b.txt", Line: 3, Type: "+", Comment: "z", Status: annotation.StatusResolved},
+	}
+	require.NoError(t, s.Save(second.Session))
+
+	list, err := s.List("feature")
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	assert.Equal(t, second.Session.ID, list[0].ID)
+	assert.Equal(t, Summary{ID: second.Session.ID, Updated: list[0].Updated, Open: 1, Outdated: 1, Resolved: 1}, list[0])
+	assert.Equal(t, 1, list[1].Reviewed)
+
+	require.NoError(t, s.Rename("feature", first.ID, "  round two  "))
+	list, err = s.List("feature")
+	require.NoError(t, err)
+	assert.Equal(t, second.Session.ID, list[0].ID, "renaming does not make a session the latest")
+	assert.Equal(t, "round two", list[1].Name)
+	got, err := s.Open(Request{Name: "round two"})
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, got.Session.ID)
+
+	got, err = s.Open(Request{ID: first.ID})
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, got.Session.ID)
+
+	require.NoError(t, s.Delete("feature", first.ID))
+	list, err = s.List("feature")
+	require.NoError(t, err)
+	assert.Len(t, list, 1)
+	_, err = s.Open(Request{ID: first.ID})
+	require.Error(t, err)
+	require.Error(t, s.Delete("feature", first.ID))
+	require.Error(t, s.Rename("feature", first.ID, "x"))
 }
 
 func TestSanitizeName(t *testing.T) {

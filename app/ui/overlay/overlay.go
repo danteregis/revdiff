@@ -1,11 +1,11 @@
 // Package overlay owns all layered popup UI for revdiff — help, annotation list,
-// theme selector, file picker, and review-target switcher overlays. It provides a Manager coordinator
+// theme selector, file picker, review-target switcher, and review-sessions picker overlays. It provides a Manager coordinator
 // that enforces mutual exclusivity (only one overlay visible at a time), routes key dispatch
 // to the active overlay, and composes the overlay on top of the base view via
 // ANSI-aware centered compositing.
 //
 // Callers supply fully populated spec structs (HelpSpec, AnnotListSpec, ThemeSelectSpec,
-// FilePickerSpec, RefPickerSpec)
+// FilePickerSpec, RefPickerSpec, SessionsSpec)
 // when opening an overlay and handle side effects by switching on the returned Outcome
 // from HandleKey. The overlay package has no dependency on ui.Model, annotation store,
 // theme loading, or any filesystem operation.
@@ -34,6 +34,7 @@ const (
 	KindFilePicker       // filterable file-jump popup
 	KindInfo             // unified info popup (description + session + commits)
 	KindRefPicker        // review-target switcher (branches, pull requests, typed refs)
+	KindSessions         // review-sessions picker
 )
 
 // OutcomeKind describes what happened after a key press in an overlay.
@@ -48,6 +49,7 @@ const (
 	OutcomeThemeCanceled                       // user canceled theme selection
 	OutcomeFileChosen                          // user picked a file (path in Outcome.FileChoice)
 	OutcomeRefChosen                           // user picked a review target (in Outcome.RefChoice)
+	OutcomeSessionAction                       // sessions picker action (in Outcome.SessionChoice)
 )
 
 // Outcome is the return value from HandleKey. Callers switch on Kind and read
@@ -58,6 +60,7 @@ type Outcome struct {
 	ThemeChoice      *ThemeChoice
 	FileChoice       *FileChoice
 	RefChoice        *RefChoice
+	SessionChoice    *SessionChoice
 }
 
 // RenderCtx carries per-render parameters passed to Compose.
@@ -226,6 +229,7 @@ type Manager struct {
 	themeSel themeSelectOverlay
 	filePick filePickerOverlay
 	refPick  refPickerOverlay
+	sessions sessionsOverlay
 	info     infoOverlay
 	// bounds is the popup rectangle on screen as of the last Compose call;
 	// used by HandleMouse to hit-test clicks and translate to popup-local coords.
@@ -303,6 +307,22 @@ func (m *Manager) UpdateRefPicker(spec RefPickerSpec) {
 	m.refPick.update(spec)
 }
 
+// OpenSessions activates the review-sessions picker.
+func (m *Manager) OpenSessions(spec SessionsSpec) {
+	m.Close()
+	m.kind = KindSessions
+	m.sessions.open(spec)
+}
+
+// UpdateSessions replaces the open sessions picker's list (after a rename or
+// delete), keeping the cursor on the same session. No-op when it is not active.
+func (m *Manager) UpdateSessions(spec SessionsSpec) {
+	if m.kind != KindSessions {
+		return
+	}
+	m.sessions.update(spec)
+}
+
 // OpenInfo activates the unified info popup with the given spec.
 func (m *Manager) OpenInfo(spec InfoSpec) {
 	m.Close()
@@ -341,19 +361,29 @@ func (m *Manager) HandleKey(msg tea.KeyMsg, action keymap.Action) Outcome {
 		out = m.filePick.handleKey(msg, action)
 	case KindRefPicker:
 		out = m.refPick.handleKey(msg, action)
+	case KindSessions:
+		out = m.sessions.handleKey(msg, action)
 	case KindInfo:
 		out = m.info.handleKey(msg, action)
 	default:
 		return Outcome{}
 	}
+	m.closeOnOutcome(out)
+	return out
+}
 
+// closeOnOutcome dismisses the overlay for outcomes that imply it: a choice was
+// made or the user closed it. A sessions-picker rename or delete keeps it open.
+func (m *Manager) closeOnOutcome(out Outcome) {
 	switch out.Kind {
 	case OutcomeClosed, OutcomeAnnotationChosen, OutcomeThemeConfirmed, OutcomeThemeCanceled, OutcomeFileChosen, OutcomeRefChosen:
 		m.Close()
+	case OutcomeSessionAction:
+		if c := out.SessionChoice; c != nil && (c.Action == SessionSelect || c.Action == SessionNew) {
+			m.Close()
+		}
 	case OutcomeNone, OutcomeThemePreview: // no state change
 	}
-
-	return out
 }
 
 // HandleMouse routes a mouse event to the active overlay. wheel events drive
@@ -391,18 +421,14 @@ func (m *Manager) HandleMouse(msg tea.MouseMsg) Outcome {
 		out = m.filePick.handleMouse(msg)
 	case KindRefPicker:
 		out = m.refPick.handleMouse(msg)
+	case KindSessions:
+		out = m.sessions.handleMouse(msg)
 	case KindInfo:
 		out = m.info.handleMouse(msg)
 	default: // KindNone handled by the early return above
 		return Outcome{}
 	}
-
-	switch out.Kind {
-	case OutcomeClosed, OutcomeAnnotationChosen, OutcomeThemeConfirmed, OutcomeThemeCanceled, OutcomeFileChosen, OutcomeRefChosen:
-		m.Close()
-	case OutcomeNone, OutcomeThemePreview: // no state change
-	}
-
+	m.closeOnOutcome(out)
 	return out
 }
 
@@ -423,6 +449,8 @@ func (m *Manager) Compose(base string, ctx RenderCtx) string {
 		fg = m.filePick.render(ctx, m)
 	case KindRefPicker:
 		fg = m.refPick.render(ctx, m)
+	case KindSessions:
+		fg = m.sessions.render(ctx, m)
 	case KindInfo:
 		fg = m.info.render(ctx, m)
 	}
