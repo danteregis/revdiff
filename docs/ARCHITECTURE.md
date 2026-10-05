@@ -27,6 +27,7 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 │  app/editor/      — external $EDITOR invocation     │
 │  app/handoff/     — post-flush command preparation  │
 │  app/refsource/   — branch/PR listing for switcher  │
+│  app/session/     — per-branch review sessions      │
 │  app/keymap/      — configurable keybindings        │
 │  app/theme/       — Catalog-centric theme system    │
 │  app/history/     — review session auto-save        │
@@ -169,6 +170,10 @@ across files by concern to keep files under ~500 lines:
   `RefSource` interface, async branch / pull-request list loads (`listSeq`), selection resolution
   (PR fetch, typed-ref validation; `resolveSeq`), the annotation-drop confirmation, and
   `switchRef`, which re-points `cfg.ref` and reloads through `triggerReload`
+- **`session.go`** — review-session persistence: consumer-side `SessionStore` interface,
+  `openSession` (startup, ref switch, new session) seeding the tree's reviewed marks for the
+  regular fingerprint pipeline to validate, `saveSession` merging marks for the paths of the current
+  file list only, the resume status note, and the `new_session` action with its confirmation
 - **`search.go`** — search input handling, match computation, navigation
 - **`mouse.go`** — mouse event routing: `handleMouse` dispatch, `hitTest` pane classification
   (`hitZone`), wheel/left-click helpers (`clickTree`, `clickDiff`), layout helpers
@@ -202,6 +207,8 @@ Each source file has a matching `_test.go`.
   `tickInFlight`
 - **`refSwitchState` (`m.refs`)** — review switcher: injected `RefSource`, the startup review
   (`origin`, restored by the switcher's "original" entry), loaded lists, seqs, pending confirmation
+- **`sessionState` (`m.session`)** — injected `SessionStore`, the active session, the paths of the last
+  accepted file list (`present`), the pending resume note, and the `new_session` confirmation
 
 Methods remain on `Model` — the sub-structs group mutable state for clarity, not to create
 mini-models.
@@ -221,7 +228,7 @@ Three main types:
   `LineBg()`, `LineStyle()`, `WordDiffBg()`, `IndicatorBg()`
 - **`Renderer`** — compound ANSI rendering for elements that need raw ANSI (not lipgloss). Methods:
   `AnnotationInline()`, `DiffCursor()`, `StatusBarSeparator()`, `FileStatusMark()`,
-  `FileReviewedMark()`, `FileAnnotationMark()`
+  `FileReviewedMark()`, `FileChangedMark()`, `FileAnnotationMark()`
 - **`SGR`** — ANSI SGR stream processor. `Reemit()` re-prepends active fg/bg/bold/italic state at
   continuation line starts (needed for wrap mode because `ansi.Wrap` doesn't preserve SGR across
   newlines)
@@ -237,7 +244,8 @@ surface must route through them.
 Two independent component types, both with cursor/offset management, rendering, and keyboard
 navigation:
 - **`FileTree`** — file tree sidebar. Supports navigation (`Move`/`StepFile`), filtering
-  (annotated-only), semantic-fingerprint reviewed tracking, directory grouping. File-list reloads
+  (annotated-only), semantic-fingerprint reviewed tracking (a mark dropped because the file's diff
+  changed leaves the file "changed since review", `↻`), directory grouping. File-list reloads
   revalidate only paths reviewed before the load; marks added during the load are reconciled when
   that file's refreshed diff arrives. `VisibleFiles()` exposes file paths in rendered order after
   active filters for consumers such as the file picker.
@@ -434,6 +442,33 @@ Every command runs with `cmd.Dir` set to the repo, a context timeout, no shell, 
 `GIT_TERMINAL_PROMPT=0` / `GH_PROMPT_DISABLED=1`. Tests use real temporary repositories, a
 `url.<path>.insteadOf` rewrite for the "GitHub" remote, and a stub gh script.
 
+### app/session/ — review sessions
+
+Persists review sessions per git branch so a review can be resumed after the code changes. `Store`
+(built by `New(root, repoDir)`, root `~/.config/revdiff/sessions` from `DefaultRoot()`) is consumed
+through `ui.SessionStore` (`Open`, `Save`):
+
+- **Layout** — `<root>/<repo dir>/<branch dir>/<session id>.json`. `<repo dir>` is a readable name plus
+  a hash of the repository identity: the normalized `origin` URL (https / ssh / scp forms collapse to
+  `host/path`), else the absolute git common dir, so clones and worktrees of one project share
+  sessions and same-named checkouts never collide (never the bare basename, see #331).
+  `<branch dir>` is the percent-escaped branch key. A session's branch and id come from the file's
+  location, not its contents.
+- **Branch key** — working-tree, `--staged` and single-ref reviews use the checked-out branch
+  (`detached-<sha>` for a detached HEAD); a range `A..B` / `A...B` uses `B` (a remote-tracking
+  `origin/B` maps to `B`, `HEAD` or an empty side to the checked-out branch, anything else is used
+  literally). The UI passes an explicit key for switcher selections (branch name, PR head branch).
+- **Open** — `Request{Ref, Staged, Branch, Name, Fresh}`: fresh session, named session (resume or
+  create), or the branch's most recently updated one; a new session when none exists. `Opened`
+  reports `Resumed` and `FingerprintMismatch` (the stored `fingerprint_version` differs from
+  `diff.FileFingerprintVersion`, so marks cannot be verified).
+- **Save** — atomic (`fsutil.AtomicWriteFile`, 0600); stamps schema/fingerprint versions, repo id
+  and update time, and re-resolves the head commit when the UI cleared it on reload. A session that
+  has no state and was never written is skipped.
+
+Every git command runs with `cmd.Dir` set, a timeout, no shell and prompts disabled. Tests use real
+temporary repositories.
+
 ### app/history/ — session auto-save
 
 `Save(Params)` writes review session as markdown to `~/.config/revdiff/history/`. Includes header,
@@ -467,11 +502,12 @@ belong to the consumer.
 - **`styleResolver`** — `Color()`, `Style()`, `LineBg()`, `LineStyle()`, `WordDiffBg()`,
   `IndicatorBg()`; implemented by `style.Resolver`
 - **`styleRenderer`** — `AnnotationInline()`, `DiffCursor()`, `StatusBarSeparator()`,
-  `FileStatusMark()`, `FileReviewedMark()`, `FileAnnotationMark()`; implemented by `style.Renderer`
+  `FileStatusMark()`, `FileReviewedMark()`, `FileChangedMark()`, `FileAnnotationMark()`; implemented by
+  `style.Renderer`
 - **`sgrProcessor`** — `Reemit()`; implemented by `style.SGR`
 - **`wordDiffer`** — `ComputeIntraRanges()`, `PairLines()`, `InsertHighlightMarkers()`; implemented
   by `worddiff.Differ`
-- **`FileTreeComponent`** — 27 methods (navigation, query, mutation, scroll-state, render);
+- **`FileTreeComponent`** — 30 methods (navigation, query, mutation, scroll-state, render);
   implemented by `sidepane.FileTree`
 - **`TOCComponent`** — 9 methods (navigation, cursor/section query+set, scroll-state, render);
   implemented by `sidepane.TOC`
@@ -487,6 +523,9 @@ belong to the consumer.
   `ModelConfig.PostFlushHook`)
 - **`RefSource`** — `Branches()`, `PullRequests()`, `PullRequestRef(n)`, `CheckRef(ref)`; implemented by
   `refsource.Source` (wired via `ModelConfig.RefSource` for git diffs only; nil disables `switch_ref`)
+- **`SessionStore`** — `Open(req)`, `Save(session)`; implemented by `session.Store` (wired via
+  `ModelConfig.Sessions` for git diffs only, not with `--all-files` or `--no-session`; nil disables
+  persistence and `new_session`)
 
 ## Data Flow
 
@@ -500,7 +539,7 @@ main()  [main.go]
       → prepareStdinMode [stdin.go]  (if --stdin)
       → setupVCSRenderer [renderer_setup.go] (otherwise)
       → construct style, theme catalog adapter, all dependencies
-      → ui.NewModel(ModelConfig{...})
+      → ui.NewModel(ModelConfig{...})  [opens the branch's review session, seeds reviewed marks]
       → tea.NewProgram(model, WithoutSignalHandler).Run()  [shutdownGuard owns SIGHUP/SIGTERM; SIGINT drained]
       → finalize()      [main.go] → saveHistory() on non-discarded, non-empty exit; -o output only on graceful (non-signal) exit
 ```
@@ -652,6 +691,7 @@ User presses '?' / '@' / 'T' / 'P' / 'i' / 'b'
 - **Theme files**: `~/.config/revdiff/themes/` (auto-created on first run)
 - **Keybindings**: `~/.config/revdiff/keybindings` (`map`/`unmap` format)
 - **History**: `~/.config/revdiff/history/` (auto-save dir)
+- **Sessions**: `~/.config/revdiff/sessions/` (per-branch review sessions)
 
 Theme precedence: `--theme` overwrites all 23 color fields + chroma-style, ignoring `--color-*`
 flags or env vars. Applied via `applyTheme()` in `app/revdiff/themes.go` which directly overwrites

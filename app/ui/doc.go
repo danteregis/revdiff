@@ -28,6 +28,8 @@
 //   - refswitch.go — runtime review switcher: [RefSource] interface, branch / pull-request
 //     list loading, selection resolution (fetch, validation), annotation-drop confirmation,
 //     and the ref switch that reloads through triggerReload
+//   - session.go — review sessions: [SessionStore] interface, opening a branch's session (seeding
+//     reviewed marks for fingerprint validation), merge-saving marks, new_session
 //   - search.go — incremental search: input handling, match computation, navigation
 //
 // Model mutable state is organized into explicit sub-structs by concern:
@@ -83,6 +85,7 @@
 // [SyntaxHighlighter] (provides ANSI-highlighted lines), [Blamer] (provides blame data),
 // [ThemeCatalog] (provides theme discovery, resolution, and persistence),
 // [ExternalEditor] (provides $EDITOR invocation for annotation temp-file editing
-// and source-file opening), and [RefSource] (lists branches and pull requests and
-// resolves them to refs for the review switcher). All are defined in this package and implemented externally.
+// and source-file opening), [RefSource] (lists branches and pull requests and
+// resolves them to refs for the review switcher), and [SessionStore] (persists
+// per-branch review sessions). All are defined in this package and implemented externally.
 package ui

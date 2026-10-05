@@ -24,6 +24,9 @@ import (
 //			FileAnnotationMarkFunc: func() string {
 //				panic("mock out the FileAnnotationMark method")
 //			},
+//			FileChangedMarkFunc: func() string {
+//				panic("mock out the FileChangedMark method")
+//			},
 //			FileReviewedMarkFunc: func() string {
 //				panic("mock out the FileReviewedMark method")
 //			},
@@ -49,6 +52,9 @@ type styleRendererMock struct {
 	// FileAnnotationMarkFunc mocks the FileAnnotationMark method.
 	FileAnnotationMarkFunc func() string
 
+	// FileChangedMarkFunc mocks the FileChangedMark method.
+	FileChangedMarkFunc func() string
+
 	// FileReviewedMarkFunc mocks the FileReviewedMark method.
 	FileReviewedMarkFunc func() string
 
@@ -73,6 +79,9 @@ type styleRendererMock struct {
 		// FileAnnotationMark holds details about calls to the FileAnnotationMark method.
 		FileAnnotationMark []struct {
 		}
+		// FileChangedMark holds details about calls to the FileChangedMark method.
+		FileChangedMark []struct {
+		}
 		// FileReviewedMark holds details about calls to the FileReviewedMark method.
 		FileReviewedMark []struct {
 		}
@@ -88,6 +97,7 @@ type styleRendererMock struct {
 	lockAnnotationInline   sync.RWMutex
 	lockDiffCursor         sync.RWMutex
 	lockFileAnnotationMark sync.RWMutex
+	lockFileChangedMark    sync.RWMutex
 	lockFileReviewedMark   sync.RWMutex
 	lockFileStatusMark     sync.RWMutex
 	lockStatusBarSeparator sync.RWMutex
@@ -181,6 +191,33 @@ func (mock *styleRendererMock) FileAnnotationMarkCalls() []struct {
 	mock.lockFileAnnotationMark.RLock()
 	calls = mock.calls.FileAnnotationMark
 	mock.lockFileAnnotationMark.RUnlock()
+	return calls
+}
+
+// FileChangedMark calls FileChangedMarkFunc.
+func (mock *styleRendererMock) FileChangedMark() string {
+	if mock.FileChangedMarkFunc == nil {
+		panic("styleRendererMock.FileChangedMarkFunc: method is nil but styleRenderer.FileChangedMark was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockFileChangedMark.Lock()
+	mock.calls.FileChangedMark = append(mock.calls.FileChangedMark, callInfo)
+	mock.lockFileChangedMark.Unlock()
+	return mock.FileChangedMarkFunc()
+}
+
+// FileChangedMarkCalls gets all the calls that were made to FileChangedMark.
+// Check the length with:
+//
+//	len(mockedstyleRenderer.FileChangedMarkCalls())
+func (mock *styleRendererMock) FileChangedMarkCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockFileChangedMark.RLock()
+	calls = mock.calls.FileChangedMark
+	mock.lockFileChangedMark.RUnlock()
 	return calls
 }
 

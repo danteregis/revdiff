@@ -767,6 +767,65 @@ func TestFileTree_ReconcileReviewed(t *testing.T) {
 	assert.False(t, ft.IsReviewed("c.go"), "missing fingerprint is cleared")
 }
 
+func TestFileTree_ChangedSinceReview(t *testing.T) {
+	ft := NewFileTree(fileEntries("a.go", "b.go", "c.go"))
+	ft.SetReviewed("a.go", "same")
+	ft.SetReviewed("b.go", "old")
+	ft.SetReviewed("c.go", "old-c")
+
+	ft.ReconcileReviewed(ft.ReviewedFingerprints(), map[string]string{"a.go": "same", "b.go": "new", "c.go": "old-c"})
+	assert.False(t, ft.IsChangedSinceReview("a.go"))
+	assert.True(t, ft.IsChangedSinceReview("b.go"))
+	assert.Equal(t, 1, ft.ChangedSinceReviewCount())
+
+	ft.ReconcileReviewedPath("c.go", "new-c")
+	assert.True(t, ft.IsChangedSinceReview("c.go"))
+	assert.Equal(t, 2, ft.ChangedSinceReviewCount())
+
+	t.Run("changed files count as unreviewed for the filter", func(t *testing.T) {
+		ft.ToggleUnreviewedFilter()
+		assert.Equal(t, []string{"b.go", "c.go"}, ft.VisibleFiles())
+		ft.ToggleUnreviewedFilter()
+	})
+
+	ft.SetReviewed("b.go", "new")
+	assert.False(t, ft.IsChangedSinceReview("b.go"), "marking again clears the changed state")
+	ft.Unreview("c.go")
+	assert.False(t, ft.IsChangedSinceReview("c.go"))
+
+	ft.ReconcileReviewedPath("a.go", "moved")
+	ft.Rebuild(fileEntries("b.go"))
+	assert.Equal(t, 0, ft.ChangedSinceReviewCount(), "rebuild prunes paths no longer present")
+}
+
+func TestFileTree_ResetReviewed(t *testing.T) {
+	ft := NewFileTree(fileEntries("a.go", "b.go"))
+	ft.SetReviewed("a.go", "x")
+	ft.ReconcileReviewedPath("a.go", "y")
+	require.True(t, ft.IsChangedSinceReview("a.go"))
+
+	ft.ResetReviewed(map[string]string{"b.go": "fp", "gone.go": "fp2", "empty.go": "", "": "fp3"})
+	assert.False(t, ft.IsChangedSinceReview("a.go"))
+	assert.Equal(t, map[string]string{"b.go": "fp", "gone.go": "fp2"}, ft.ReviewedFingerprints(),
+		"marks for absent paths survive until a rebuild validates them")
+	ft.Rebuild(fileEntries("a.go", "b.go"))
+	assert.Equal(t, map[string]string{"b.go": "fp"}, ft.ReviewedFingerprints())
+}
+
+func TestFileTree_RenderChangedMark(t *testing.T) {
+	ft := NewFileTree(fileEntries("a.go", "b.go"))
+	res := style.PlainResolver()
+	rnd := style.NewRenderer(res)
+	ft.SetReviewed("b.go", "old")
+	ft.ReconcileReviewedPath("b.go", "new")
+	result := ft.Render(FileTreeRender{Width: 40, Height: 10, Resolver: res, Renderer: rnd})
+	assert.Contains(t, result, "↻ b.go")
+	assert.NotContains(t, result, "✓")
+	ft.SelectByPath("b.go")
+	result = ft.Render(FileTreeRender{Width: 40, Height: 10, Resolver: res, Renderer: rnd})
+	assert.Contains(t, result, "↻ b.go")
+}
+
 func TestFileTree_ReconcileReviewedPreservesNewMarkAfterSnapshot(t *testing.T) {
 	ft := NewFileTree(fileEntries("a.go", "b.go"))
 	ft.SetReviewed("a.go", "old-a")

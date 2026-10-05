@@ -126,6 +126,8 @@ Pass `--start-at-change` only when the user explicitly asks for that cursor pref
 
 Pass `--filter-unreviewed` only when the user asks for the tree limited to files not marked reviewed; never infer it automatically. The `F` key toggles the same filter during the review.
 
+In git repositories revdiff keeps a review session per branch and resumes it silently: files the user already marked reviewed stay reviewed, and files that changed since show as changed since review. Do not pass `--session` or `--no-session` on automatic launches. Pass `--session=new` only when the user asks to start the review over from scratch, `--session=<name>` only when the user names a session, and `--no-session` only when the user asks not to persist the review.
+
 Run the launcher through the override-chain resolver:
 
 ```bash

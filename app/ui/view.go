@@ -145,6 +145,8 @@ func (m Model) truncateHeaderTitle(title string, paneW int) string {
 // feedback is the most recoverable of the group.
 func (m Model) transientHint() string {
 	switch {
+	case m.session.hint != "":
+		return m.session.hint
 	case m.reload.hint != "":
 		return m.reload.hint
 	case m.refs.hint != "":
@@ -213,6 +215,9 @@ func (m Model) statusBarText() string {
 	var rightParts []string
 	if rc := m.tree.ReviewedCount(); rc > 0 {
 		rightParts = append(rightParts, fmt.Sprintf("✓ %d/%d", rc, m.tree.TotalFiles()))
+	}
+	if cc := m.tree.ChangedSinceReviewCount(); cc > 0 {
+		rightParts = append(rightParts, fmt.Sprintf("↻ %d", cc))
 	}
 	if cnt := m.store.Count(); cnt > 0 {
 		suffix := "annotations"

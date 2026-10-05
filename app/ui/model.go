@@ -31,6 +31,7 @@ import (
 	"github.com/umputun/revdiff/app/editor"
 	"github.com/umputun/revdiff/app/keymap"
 	"github.com/umputun/revdiff/app/review"
+	"github.com/umputun/revdiff/app/session"
 	"github.com/umputun/revdiff/app/ui/overlay"
 	"github.com/umputun/revdiff/app/ui/sidepane"
 	"github.com/umputun/revdiff/app/ui/style"
@@ -78,6 +79,7 @@ type styleRenderer interface {
 	StatusBarSeparator() string
 	FileStatusMark(status diff.FileStatus) string
 	FileReviewedMark() string
+	FileChangedMark() string
 	FileAnnotationMark() string
 }
 
@@ -217,6 +219,10 @@ type FileTreeComponent interface {
 	ReviewedFingerprints() map[string]string
 	// IsReviewed reports whether the given path is marked reviewed.
 	IsReviewed(path string) bool
+	// IsChangedSinceReview reports whether a reviewed mark on path was dropped because its diff changed.
+	IsChangedSinceReview(path string) bool
+	// ChangedSinceReviewCount returns the number of files changed since they were reviewed.
+	ChangedSinceReviewCount() int
 	// HasFile returns true if there is a file entry in the given direction.
 	HasFile(dir sidepane.Direction) bool
 	// Move navigates the cursor according to the given motion.
@@ -245,6 +251,8 @@ type FileTreeComponent interface {
 	SetReviewed(path, fingerprint string)
 	// Unreview removes the reviewed mark for a path.
 	Unreview(path string)
+	// ResetReviewed replaces all reviewed marks (e.g. with a persisted session's) and clears changed state.
+	ResetReviewed(marks map[string]string)
 	// ReconcileReviewed validates marks captured before a refreshed file-list load.
 	ReconcileReviewed(before, current map[string]string)
 	// ReconcileReviewedPath validates a reviewed mark when its refreshed diff is loaded.
@@ -597,6 +605,7 @@ type Model struct {
 	reload      reloadState       // pending-confirmation state and applicability for R reload
 	compact     compactState      // applicability + transient hint for compact diff mode
 	refs        refSwitchState    // runtime review-target switcher (branches, pull requests, typed refs)
+	session     sessionState      // persisted review session (reviewed marks) for the reviewed branch
 	editorState editorState       // transient hint state for source-file editor launches
 	output      outputState       // transient hint state for the O in-session output flush
 	keys        keyState          // chord-pending state and transient hint for leader-chord keybindings
@@ -737,6 +746,17 @@ type ModelConfig struct {
 	// composition root wires it only for git diffs (not stdin, compare,
 	// all-files, or file-only review).
 	RefSource RefSource
+	// Sessions persists review sessions (reviewed marks) per branch so a review
+	// can be resumed. Nil disables persistence; the composition root wires it
+	// only for git diffs (not stdin, compare, all-files, hg, jj, or file-only
+	// review) and not under --no-session.
+	Sessions SessionStore
+	// SessionName resumes or creates the named session instead of the branch's
+	// most recent one. Ignored when Sessions is nil.
+	SessionName string
+	// NewSession starts a fresh session instead of resuming one. Ignored when
+	// Sessions is nil.
+	NewSession bool
 	// CommitLog enumerates commits in the current ref range for the info popup's
 	// commit-log section. When nil, NewModel attempts to derive the source by
 	// type-asserting the Renderer against diff.CommitLogger; if the assertion
@@ -902,10 +922,14 @@ func NewModel(cfg ModelConfig) (Model, error) {
 	if isNilValue(refSource) {
 		refSource = nil
 	}
+	sessions := cfg.Sessions
+	if isNilValue(sessions) {
+		sessions = nil
+	}
 	showUntracked := cfg.ShowUntracked && cfg.LoadUntracked != nil
 	commitsApplicable := cfg.CommitsApplicable && cls != nil
 
-	return Model{
+	m := Model{
 		resolver:      cfg.StyleResolver,
 		renderer:      cfg.StyleRenderer,
 		sgr:           cfg.SGR,
@@ -985,7 +1009,10 @@ func NewModel(cfg ModelConfig) (Model, error) {
 				reviewCfg:         reviewCfg,
 			},
 		},
-	}, nil
+		session: sessionState{store: sessions},
+	}
+	m.openSession(session.Request{Ref: cfg.Ref, Staged: cfg.Staged, Name: cfg.SessionName, Fresh: cfg.NewSession})
+	return m, nil
 }
 
 // Store returns the annotation store for reading results after quit.
@@ -1075,6 +1102,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.refs.hint = ""
 	m.keys.hint = ""
 	m.vim.hint = ""
+	m.session.hint = ""
 
 	// flush any deferred wheel work (cursor pin + diff render) before the key
 	// action runs — m.nav.diffCursor must be at its final pinned position
@@ -1089,6 +1117,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// pending review-switch intercept: y confirms dropping annotations, any other key cancels
 	if m.refs.pending != nil {
 		return m.handlePendingRefSwitch(msg)
+	}
+
+	// pending new-session intercept: y confirms, any other key cancels
+	if m.session.confirmNew {
+		return m.handlePendingNewSession(msg)
 	}
 
 	// chord-second guard: a second key arriving while a chord is pending must
@@ -1173,10 +1206,8 @@ func (m Model) dispatchAction(action keymap.Action) (tea.Model, tea.Cmd) {
 		return m.handleHunkNav(action == keymap.ActionNextHunk)
 	case keymap.ActionNextAnnotation, keymap.ActionPrevAnnotation:
 		return m.handleAnnotNav(action == keymap.ActionNextAnnotation)
-	case keymap.ActionReload:
-		return m.handleReload()
-	case keymap.ActionFlushOutput:
-		return m.handleFlushOutput()
+	case keymap.ActionReload, keymap.ActionFlushOutput, keymap.ActionNewSession:
+		return m.handleReviewStateAction(action)
 	default: // remaining actions (navigation, search, etc.) handled by pane-specific handlers below
 	}
 
@@ -1291,6 +1322,21 @@ func (m Model) handleChordSecond(keyStr string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m.dispatchAction(action)
+}
+
+// handleReviewStateAction routes the actions that act on the review as a whole
+// rather than on a pane: reload, output flush, and starting a new session.
+func (m Model) handleReviewStateAction(action keymap.Action) (tea.Model, tea.Cmd) {
+	switch action {
+	case keymap.ActionReload:
+		return m.handleReload()
+	case keymap.ActionFlushOutput:
+		return m.handleFlushOutput()
+	case keymap.ActionNewSession:
+		return m.handleNewSession()
+	default:
+		return m, nil
+	}
 }
 
 // handleReload handles the ActionReload key. In stdin mode the feature is

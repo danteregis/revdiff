@@ -115,6 +115,21 @@ func (r Renderer) FileReviewedMark() string {
 	return string(addFg) + "✓" + string(normalFg) + " "
 }
 
+// FileChangedMark returns a colored marker for files whose content changed
+// after they were marked reviewed in a resumed session. Uses the modify color
+// so it reads as "needs another look", distinct from the reviewed checkmark.
+func (r Renderer) FileChangedMark() string {
+	modFg := Color(ansiColor(r.res.colors.ModifyFg, 38))
+	if modFg == "" {
+		return "↻ "
+	}
+	normalFg := Color(ansiColor(r.res.colors.Normal, 38))
+	if normalFg == "" {
+		normalFg = ResetFg
+	}
+	return string(modFg) + "↻" + string(normalFg) + " "
+}
+
 // FileAnnotationMark returns a colored annotation marker for files with annotations.
 // uses AnnotationFg with ResetFg after the marker.
 func (r Renderer) FileAnnotationMark() string {

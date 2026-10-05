@@ -7,6 +7,7 @@ import (
 
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/refsource"
+	"github.com/umputun/revdiff/app/session"
 	"github.com/umputun/revdiff/app/ui"
 )
 
@@ -20,6 +21,7 @@ type vcsSetup struct {
 	untrackedRenamesFn func([]string) ([]diff.FileEntry, error) // git-only; pairs untracked renames with their origin
 	commitLogger       diff.CommitLogger                        // VCS-backed commit log source; nil when VCS lacks the capability
 	refSource          ui.RefSource                             // runtime review switcher; git diffs only, nil otherwise
+	sessions           ui.SessionStore                          // review-session persistence; git diffs only, nil otherwise
 }
 
 // setupVCSRenderer detects the VCS and creates the appropriate renderer, blamer, and untracked function.
@@ -38,7 +40,8 @@ func setupVCSRenderer(opts options) (vcsSetup, error) {
 			return vcsSetup{}, err
 		}
 		return vcsSetup{renderer: r, vcsType: diff.VCSGit, gitRoot: vcsRoot, workDir: workDir, blamer: g, untrackedFn: g.UntrackedFiles,
-			untrackedRenamesFn: g.UntrackedRenames, commitLogger: g, refSource: gitRefSource(opts, vcsRoot)}, nil
+			untrackedRenamesFn: g.UntrackedRenames, commitLogger: g, refSource: gitRefSource(opts, vcsRoot),
+			sessions: gitSessionStore(opts, vcsRoot, session.DefaultRoot())}, nil
 	case diff.VCSHg:
 		if opts.Staged {
 			fmt.Fprintln(os.Stderr, "warning: --staged ignored in mercurial repository (no staging area)")
@@ -78,6 +81,24 @@ func gitRefSource(opts options, repoRoot string) ui.RefSource {
 		return nil
 	}
 	return refsource.New(repoRoot)
+}
+
+// gitSessionStore returns the review-session store for a git repo, or nil when
+// sessions are disabled (--no-session) or the review is not a diff a session
+// can follow: --all-files lists tracked files rather than changes. (--stdin and
+// --compare-old/--compare-new never reach VCS setup, and hg, jj and file-only
+// review have no store.) A store that cannot be created is reported as a
+// warning and leaves sessions off rather than failing the review.
+func gitSessionStore(opts options, repoRoot, root string) ui.SessionStore {
+	if opts.NoSession || opts.AllFiles {
+		return nil
+	}
+	s, err := session.New(root, repoRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: review sessions disabled: %v\n", err)
+		return nil
+	}
+	return s
 }
 
 // makeGitRenderer selects the appropriate git renderer based on flags.

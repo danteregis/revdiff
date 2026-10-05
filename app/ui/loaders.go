@@ -413,6 +413,9 @@ func (m *Model) triggerReload() tea.Cmd {
 	m.reviewed.loadSeq++
 	m.reviewed.cache = make(map[string]string)
 	m.reviewed.pending = make(map[string]uint64)
+	if m.session.cur != nil {
+		m.session.cur.Head = "" // the reviewed ref may have moved; the next save re-resolves it
+	}
 	return tea.Batch(m.loadFiles(), m.loadCommits())
 }
 
@@ -467,6 +470,8 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	m.tree.ReconcileReviewed(msg.reviewedBefore, msg.reviewedFingerprints)
 	m.reviewed.cache = make(map[string]string, len(msg.reviewedFingerprints))
 	maps.Copy(m.reviewed.cache, msg.reviewedFingerprints)
+	m.setSessionPresent(diff.FileEntryPaths(entries))
+	m.finishSessionNote()
 	if m.tree.FilterActive() {
 		m.tree.RefreshFilter(m.annotatedFiles())
 	}
@@ -641,6 +646,7 @@ func (m Model) handleReviewFingerprintLoaded(msg reviewFingerprintLoadedMsg) (te
 	}
 	m.reviewed.cache[msg.path] = msg.fingerprint
 	m.tree.SetReviewed(msg.path, msg.fingerprint)
+	m.saveSession()
 	return m.loadSelectedIfChanged()
 }
 

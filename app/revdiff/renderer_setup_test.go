@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -29,6 +30,21 @@ func TestGitRefSource(t *testing.T) {
 	assert.NotNil(t, gitRefSource(options{Staged: true}, dir), "staged review is switchable")
 	assert.NotNil(t, gitRefSource(options{Only: []string{"a.go"}}, dir), "--only narrows any diff")
 	assert.Nil(t, gitRefSource(options{AllFiles: true}, dir), "--all-files lists files, not a diff")
+}
+
+func TestGitSessionStore(t *testing.T) {
+	repo := t.TempDir()
+	runMainTestGit(t, repo, "init", "-q")
+	root := t.TempDir()
+	assert.NotNil(t, gitSessionStore(options{}, repo, root), "diff review persists sessions")
+	assert.NotNil(t, gitSessionStore(options{Only: []string{"a.go"}}, repo, root), "--only narrows a diff, sessions merge")
+	assert.Nil(t, gitSessionStore(options{NoSession: true}, repo, root), "--no-session disables persistence")
+	assert.Nil(t, gitSessionStore(options{AllFiles: true}, repo, root), "--all-files lists files, not a diff")
+	assert.Nil(t, gitSessionStore(options{}, repo, ""), "no sessions directory")
+	assert.Nil(t, gitSessionStore(options{}, t.TempDir(), root), "not a repository")
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "creating a store writes nothing")
 }
 
 func TestMakeGitRenderer_WithoutOnly(t *testing.T) {

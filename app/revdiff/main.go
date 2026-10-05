@@ -132,6 +132,7 @@ func run(opts options) (int, error) {
 		untrackedRenamesFn func([]string) ([]diff.FileEntry, error)
 		commitLogger       diff.CommitLogger
 		refSource          ui.RefSource
+		sessions           ui.SessionStore
 		vcsType            diff.VCSType
 		err                error
 	)
@@ -187,6 +188,7 @@ func run(opts options) (int, error) {
 		untrackedRenamesFn = setup.untrackedRenamesFn
 		commitLogger = setup.commitLogger
 		refSource = setup.refSource
+		sessions = setup.sessions
 		vcsType = setup.vcsType
 	}
 
@@ -218,6 +220,7 @@ func run(opts options) (int, error) {
 		postFlushHook = hook
 	}
 
+	sessionName, freshSession := opts.sessionStart()
 	model, err := ui.NewModel(ui.ModelConfig{
 		Renderer:             renderer,
 		Store:                store,
@@ -234,6 +237,9 @@ func run(opts options) (int, error) {
 		Keymap:               km,
 		PostFlushHook:        postFlushHook,
 		RefSource:            refSource,
+		Sessions:             sessions,
+		SessionName:          sessionName,
+		NewSession:           freshSession,
 		CommitLog:            commitLogger,
 		CommitsApplicable:    commitsApplicable(opts, commitLogger),
 		ReloadApplicable:     reloadApplicable(opts),

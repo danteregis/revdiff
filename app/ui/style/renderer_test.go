@@ -166,6 +166,23 @@ func TestRenderer_FileReviewedMark(t *testing.T) {
 	})
 }
 
+func TestRenderer_FileChangedMark(t *testing.T) {
+	t.Run("colored", func(t *testing.T) {
+		rnd := NewRenderer(NewResolver(fullColorsForTesting))
+		got := rnd.FileChangedMark()
+		assert.Contains(t, got, "↻")
+		assert.Contains(t, got, "\033[38;2;")
+		assert.True(t, strings.HasSuffix(got, " "))
+	})
+	t.Run("plain", func(t *testing.T) {
+		assert.Equal(t, "↻ ", NewRenderer(PlainResolver()).FileChangedMark())
+	})
+	t.Run("emptyNormalFallsBackToResetFg", func(t *testing.T) {
+		got := NewRenderer(NewResolver(Colors{ModifyFg: "#f5c542"})).FileChangedMark()
+		assert.True(t, strings.HasSuffix(got, "\033[39m "), "got %q", got)
+	})
+}
+
 func TestRenderer_FileAnnotationMark(t *testing.T) {
 	t.Run("colored", func(t *testing.T) {
 		rnd := NewRenderer(NewResolver(fullColorsForTesting))

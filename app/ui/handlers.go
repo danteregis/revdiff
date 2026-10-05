@@ -281,6 +281,7 @@ func (m Model) handleMarkReviewed() (tea.Model, tea.Cmd) {
 	if m.tree.IsReviewed(file) {
 		m.tree.Unreview(file)
 		delete(m.reviewed.pending, file)
+		m.saveSession()
 		return m.loadSelectedIfChanged()
 	}
 	if _, pending := m.reviewed.pending[file]; pending {
@@ -292,10 +293,12 @@ func (m Model) handleMarkReviewed() (tea.Model, tea.Cmd) {
 		fingerprint := diff.FileFingerprint(entry, m.file.lines)
 		m.reviewed.cache[file] = fingerprint
 		m.tree.SetReviewed(file, fingerprint)
+		m.saveSession()
 		return m.loadSelectedIfChanged()
 	}
 	if fingerprint := m.reviewed.cache[file]; fingerprint != "" {
 		m.tree.SetReviewed(file, fingerprint)
+		m.saveSession()
 		return m.loadSelectedIfChanged()
 	}
 

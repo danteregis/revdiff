@@ -375,6 +375,7 @@ func TestRun_RedirectedStdoutUsesTTY(t *testing.T) {
 		"REVDIFF_TUI_TEST_CONFIG":      filepath.Join(t.TempDir(), "missing-config"),
 		"REVDIFF_TUI_TEST_ANNOTATIONS": notesPath,
 		"REVDIFF_TUI_TEST_HISTORY":     filepath.Join(t.TempDir(), "history"),
+		"HOME":                         t.TempDir(), // keeps review sessions out of the real config dir
 		"REVDIFF_TEST_BINARY":          os.Args[0],
 		"REVDIFF_TEST_CAPTURE":         capturePath,
 	})

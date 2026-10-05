@@ -7,7 +7,11 @@ import (
 	"hash"
 )
 
-const fileFingerprintVersion = "revdiff-file-fingerprint-v1"
+// FileFingerprintVersion identifies the FileFingerprint algorithm. It is mixed
+// into every digest, so any change to the parser or the hashed fields must bump
+// it; persisted fingerprints carry it alongside so a mismatch can be reported as
+// "made by a different revdiff" instead of looking like a content change.
+const FileFingerprintVersion = "revdiff-file-fingerprint-v1"
 
 // FileFingerprint returns a stable identity for the effective diff of one file.
 // It intentionally ignores line numbers, context lines, and compact-mode dividers
@@ -19,7 +23,7 @@ const fileFingerprintVersion = "revdiff-file-fingerprint-v1"
 // changes such as pure renames.
 func FileFingerprint(entry FileEntry, lines []DiffLine) string {
 	h := sha256.New()
-	writeFingerprintField(h, fileFingerprintVersion)
+	writeFingerprintField(h, FileFingerprintVersion)
 	writeFingerprintField(h, entry.Path)
 	writeFingerprintField(h, entry.OldPath)
 	writeFingerprintField(h, string(entry.Status))

@@ -176,6 +176,53 @@ func TestParseArgs_FilterUnreviewed(t *testing.T) {
 	})
 }
 
+func TestParseArgs_Session(t *testing.T) {
+	t.Run("default resumes the latest session", func(t *testing.T) {
+		opts, err := parseArgs(noConfigArgs(t))
+		require.NoError(t, err)
+		name, fresh := opts.sessionStart()
+		assert.Empty(t, name)
+		assert.False(t, fresh)
+		assert.False(t, opts.NoSession)
+	})
+
+	t.Run("new starts a fresh session", func(t *testing.T) {
+		opts, err := parseArgs(append(noConfigArgs(t), "--session=new"))
+		require.NoError(t, err)
+		name, fresh := opts.sessionStart()
+		assert.Empty(t, name)
+		assert.True(t, fresh)
+	})
+
+	t.Run("other values name a session", func(t *testing.T) {
+		opts, err := parseArgs(append(noConfigArgs(t), "--session", " deep-dive "))
+		require.NoError(t, err)
+		name, fresh := opts.sessionStart()
+		assert.Equal(t, "deep-dive", name)
+		assert.False(t, fresh)
+	})
+
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("REVDIFF_NO_SESSION", "true")
+		opts, err := parseArgs(noConfigArgs(t))
+		require.NoError(t, err)
+		assert.True(t, opts.NoSession)
+	})
+
+	t.Run("config file", func(t *testing.T) {
+		cfgPath := filepath.Join(t.TempDir(), "config")
+		require.NoError(t, os.WriteFile(cfgPath, []byte("[Application Options]\nno-session = true\n"), 0o600))
+		opts, err := parseArgs([]string{"--config", cfgPath})
+		require.NoError(t, err)
+		assert.True(t, opts.NoSession)
+	})
+
+	t.Run("session and no-session conflict", func(t *testing.T) {
+		_, err := parseArgs(append(noConfigArgs(t), "--session=x", "--no-session"))
+		require.ErrorContains(t, err, "--session cannot be used with --no-session")
+	})
+}
+
 func TestParseArgs_PageOverlap(t *testing.T) {
 	t.Run("default is zero", func(t *testing.T) {
 		opts, err := parseArgs(noConfigArgs(t))

@@ -163,7 +163,7 @@ Press `O` to export the current annotations without exiting (`flush_output`, reb
 
 For clipboard-only flushes on macOS, set `post-flush-command = pbcopy` in `~/.config/revdiff/config`; no `--output` flag is required. On Linux, use `xclip -selection clipboard` for X11 or `wl-copy` for Wayland. For remote terminal clipboards, configure an OSC 52 helper as the post-flush command.
 
-Press `Space` to mark the focused file reviewed. Press `F` to toggle the sidebar between all files and unreviewed files; while filtered, marking a file reviewed removes it from the list and advances to the next unfinished file. On `R` reload, revdiff keeps the mark only when the file's effective text diff is unchanged; rebases that only shift line numbers or surrounding context keep it, while changed or removed files lose it. Binary files and opaque placeholders are conservatively unmarked on reload because their rendered diff does not expose enough content to prove they are unchanged.
+Press `Space` to mark the focused file reviewed. Press `F` to toggle the sidebar between all files and unreviewed files; while filtered, marking a file reviewed removes it from the list and advances to the next unfinished file. On `R` reload, revdiff keeps the mark only when the file's effective text diff is unchanged; rebases that only shift line numbers or surrounding context keep it, while changed or removed files lose it. Binary files and opaque placeholders are conservatively unmarked on reload because their rendered diff does not expose enough content to prove they are unchanged. A file that loses its mark because its change moved on shows `↻` (changed since review) until you mark it again. In git repositories marks are saved in the branch's review session (see "Review Sessions").
 
 **View:**
 
@@ -186,8 +186,9 @@ Press `Space` to mark the focused file reviewed. Press `F` to toggle the sidebar
 | `b` | Switch the review to a branch, an open pull request, or a typed ref (git only; warns if annotations exist) |
 | `q` | Quit, output annotations to stdout |
 | `Q` | Discard all annotations and quit (confirms if annotations exist) |
+| `Ctrl+N` | Start a new review session for the current branch (git only; confirms if marks or annotations exist) |
 
-The `b` switcher (`switch_ref`) lists the original review, open GitHub pull requests (via `gh`, when installed and authenticated), and local branches. Branches and pull requests use GitHub's three-dot comparison: a branch `X` is reviewed as `<base>...X` (base: `origin/HEAD`, else `origin`/`upstream` `main`/`master`, else local `main`/`master`), and a pull request is fetched into `FETCH_HEAD` only (no branch created or moved, working tree untouched) and reviewed as `<base commit>...<head commit>`. Typing filters the list; the `use "<text>"` row (the only row when nothing matches) uses the typed text as a ref after validation. Switching reloads like `R` and drops annotations after a `y` confirmation. Not available with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in hg/jj repositories.
+The `b` switcher (`switch_ref`) lists the original review, open GitHub pull requests (via `gh`, when installed and authenticated), and local branches. Branches and pull requests use GitHub's three-dot comparison: a branch `X` is reviewed as `<base>...X` (base: `origin/HEAD`, else `origin`/`upstream` `main`/`master`, else local `main`/`master`), and a pull request is fetched into `FETCH_HEAD` only (no branch created or moved, working tree untouched) and reviewed as `<base commit>...<head commit>`. Typing filters the list; the `use "<text>"` row (the only row when nothing matches) uses the typed text as a ref after validation. Switching reloads like `R`, loads the target branch's review session, and drops annotations after a `y` confirmation. Not available with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in hg/jj repositories.
 
 ## Status Bar Icons
 
@@ -340,6 +341,16 @@ The agent answers as a markdown document and reopens it in revdiff via `--only`,
 ## Preloading Annotations
 
 Use `--annotations=PATH` to preload the annotation store from a markdown file in the same `-o` format. The format is bidirectional: any file written by `-o` can be read back via `--annotations` for round-trip workflows — review, quit, edit the file externally, relaunch, and continue from the preloaded state.
+
+## Review Sessions
+
+In git repositories revdiff keeps a review session per branch, so a review survives quitting. Every file you mark reviewed with `Space` is saved together with a fingerprint of its diff. The next time you open revdiff on the same branch, the latest session is resumed silently and the status bar briefly reports what it found, e.g. `Resumed session for feature · 14 reviewed · 3 changed since review`. Files whose change is identical stay reviewed (`✓`). Files that changed after you marked them — the agent edited them, or a rebase changed their content — show `↻` (changed since review) in the tree, count as unreviewed for `F`, and add `↻ N` to the status bar; look at them and mark them again with `Space`.
+
+A session belongs to a branch: working-tree, `--staged`, and single-ref reviews belong to the checked-out branch (a detached HEAD becomes `detached-<sha>`); a range `A..B` or `A...B` belongs to `B` (a remote-tracking `origin/B` counts as `B`); a branch or pull request picked with `b` belongs to that branch or to the pull request's head branch, and switching loads its session. A narrowed run (`--only`, `--include`, `--exclude`, untracked files hidden) only updates marks for the files it shows — marks for other files stay in the session.
+
+Press `Ctrl+N` (`new_session`) to start a fresh session for the current branch; when marks or annotations exist, revdiff asks for `y` first. Previous sessions stay on disk. From the command line, `--session=new` starts fresh, `--session=NAME` resumes or creates a named session (e.g. one per review round), and `--no-session` turns persistence off (also `REVDIFF_SESSION` / `REVDIFF_NO_SESSION`, or `session` / `no-session` in the config file).
+
+Sessions are stored as JSON under `~/.config/revdiff/sessions/<repo>-<hash>/<branch>/<id>.json`, written atomically (mode `0600`) on every change, so a crash or a signal loses nothing; a session that never had any state is never written. The repository directory is keyed by a hash of the `origin` URL (or of the git common directory when there is no `origin`), so separate clones and worktrees of one project share sessions and same-named checkouts never collide. Each file records the fingerprint version; marks saved by a revdiff with a different fingerprint algorithm cannot be verified and are shown as changed since review. Sessions are not used with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in Mercurial and Jujutsu repositories.
 
 ## Review History
 

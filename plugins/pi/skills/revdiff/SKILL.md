@@ -36,6 +36,7 @@ Tool examples:
 - `args: "--all-files --exclude vendor"`: review all tracked files except vendor
 - `args: "--no-tree"`: review with the file tree pane hidden
 - `args: "--filter-unreviewed"`: show only files not marked reviewed
+- `args: "--session=new"`: start a fresh review session instead of resuming the branch's last one
 - `args: "--page-overlap=2"`: keep 2 lines from the previous screen when paging
 - `args: "--start-at-change"`: position the cursor on the first changed line
 - `args: "--description='why this refactor matters' main"`: include review context in the info popup
@@ -114,6 +115,7 @@ Behavior:
 - If revdiff exits without captured annotations, report that no annotations were captured and stop.
 - When recent agent work created new untracked files, include `--untracked` so those files appear in the review tree.
 - Include `--filter-unreviewed` only when the user asks for the tree limited to files not marked reviewed; `F` toggles the same filter during the review.
+- In git repositories revdiff resumes the branch's review session silently (reviewed marks persist across runs). Do not pass `--session` or `--no-session` unless the user asks to start over (`--session=new`), names a session, or asks not to persist the review.
 - When launching after analysis or refactor work, include `--description` or `--description-file` so the info popup explains the review context.
 
 ## Existing review history

@@ -55,6 +55,8 @@ type options struct {
 	Include               []string `long:"include" short:"I" ini-name:"include" env:"REVDIFF_INCLUDE" env-delim:"," description:"include only files matching prefix (may be repeated)"`
 	Only                  []string `long:"only" short:"F" no-ini:"true" description:"show only these files (may be repeated)"`
 	HistoryDir            string   `long:"history-dir" ini-name:"history-dir" env:"REVDIFF_HISTORY_DIR" description:"directory for review history auto-saves"`
+	Session               string   `long:"session" ini-name:"session" env:"REVDIFF_SESSION" description:"review session to resume by name, or new for a fresh one"`
+	NoSession             bool     `long:"no-session" ini-name:"no-session" env:"REVDIFF_NO_SESSION" description:"disable review session persistence"`
 	Output                string   `long:"output" short:"o" env:"REVDIFF_OUTPUT" no-ini:"true" description:"write annotations to file instead of stdout"`
 	PostFlushCommand      string   `long:"post-flush-command" ini-name:"post-flush-command" env:"REVDIFF_POST_FLUSH_COMMAND" description:"run command after a successful O flush"`
 	Keys                  string   `long:"keys" env:"REVDIFF_KEYS" no-ini:"true" description:"path to keybindings file"`
@@ -123,6 +125,16 @@ func (o options) startupUntracked() bool {
 	return true
 }
 
+// sessionStart maps --session to the startup session request: "new" starts a
+// fresh session, any other non-empty value resumes or creates a named one, and
+// empty resumes the branch's most recent session.
+func (o options) sessionStart() (name string, fresh bool) {
+	if o.Session == "new" {
+		return "", true
+	}
+	return o.Session, false
+}
+
 // parseArgs parses CLI arguments with config file support.
 // config file is loaded first, then CLI args override.
 // precedence: CLI flags > env vars > config file > built-in defaults.
@@ -168,6 +180,11 @@ func parseArgs(args []string) (options, error) {
 
 	if strings.ContainsAny(opts.AnnotationMarker, "\n\r\t") {
 		return options{}, errors.New("--annotation-marker cannot contain control characters")
+	}
+
+	opts.Session = strings.TrimSpace(opts.Session)
+	if opts.Session != "" && opts.NoSession {
+		return options{}, errors.New("--session cannot be used with --no-session")
 	}
 
 	if opts.Description != "" && opts.DescriptionFile != "" {

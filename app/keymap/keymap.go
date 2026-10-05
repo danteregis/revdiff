@@ -77,6 +77,7 @@ const (
 	ActionOpenFileInEditor       Action = "open_file_in_editor"
 	ActionFlushOutput            Action = "flush_output"
 	ActionQuickPraise            Action = "quick_praise"
+	ActionNewSession             Action = "new_session"
 )
 
 // SectionPane is the help section name for pane-related keybindings.
@@ -108,6 +109,7 @@ var validActions = map[Action]bool{
 	ActionOpenFileInEditor: true,
 	ActionFlushOutput:      true,
 	ActionQuickPraise:      true,
+	ActionNewSession:       true,
 }
 
 // deprecatedActionAliases maps obsolete action names parsed from user
@@ -261,6 +263,9 @@ func defaultDescriptions() []HelpEntry {
 		{ActionReload, "reload diff from VCS", "View"},
 		{ActionSwitchRef, "switch review to a branch, PR, or ref", "View"},
 
+		// review sessions
+		{ActionNewSession, "start a new review session", "Session"},
+
 		// quit
 		{ActionQuit, "quit", "Quit"},
 		{ActionDiscardQuit, "discard and quit", "Quit"},
@@ -326,6 +331,7 @@ func defaultBindings() map[string]Action {
 		"i":      ActionInfo,
 		"R":      ActionReload,
 		"b":      ActionSwitchRef,
+		"ctrl+n": ActionNewSession,
 		"esc":    ActionDismiss,
 	}
 }

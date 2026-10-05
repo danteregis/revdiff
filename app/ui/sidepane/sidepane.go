@@ -48,6 +48,7 @@ type Resolver interface {
 type Renderer interface {
 	FileStatusMark(status diff.FileStatus) string
 	FileReviewedMark() string
+	FileChangedMark() string
 	FileAnnotationMark() string
 }
 

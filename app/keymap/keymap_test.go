@@ -47,6 +47,7 @@ func TestDefault_allExpectedBindings(t *testing.T) {
 		{"i", ActionInfo},
 		{"R", ActionReload},
 		{"b", ActionSwitchRef},
+		{"ctrl+n", ActionNewSession},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.action, km.Resolve(tt.key), "key %q should map to %q", tt.key, tt.action)

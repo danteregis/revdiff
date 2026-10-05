@@ -79,3 +79,26 @@ assuming it is free.
 parser invalidates every saved mark and looks identical to a real content change. A persisted snapshot
 should carry the fingerprint version as its own field so a mismatch can be reported instead of appearing
 as "everything changed".
+
+## Resolution: per-branch review sessions (`app/session`)
+
+Implemented as silent per-branch sessions rather than history-embedded marks, answering the findings
+above as follows:
+
+- **Not in review history.** Sessions live in their own tree (`~/.config/revdiff/sessions/`), so
+  `read-latest-history.sh` and the skill's reading of history are untouched.
+- **No silent shrink.** `saveSession` merges: only paths in the current file list are updated or
+  removed; marks for paths a narrowed run (`--only`, `--include`, untracked off) does not show are
+  kept as stored.
+- **Sound lookup key.** Repository identity is a hash of the normalized `origin` URL, else of the git
+  common dir — never the basename (#331). The branch key is derived from the reviewed ref (checked-out
+  branch for working-tree / staged / single-ref, `B` of `A..B`), never from resolved SHAs, so rebases
+  keep their marks. hg, jj, stdin, compare and all-files have no sessions.
+- **Preload goes through `loadReviewedFingerprints`.** Marks are seeded with `ResetReviewed` before the
+  first `loadFiles`; binary/placeholder rows are still rejected by `ReviewFingerprintStable`.
+- **Fingerprint version is stored** (`fingerprint_version`); a mismatch is reported as "could not be
+  verified" instead of looking like a content change.
+- **Cost.** The startup cost is the existing fingerprint fetch for previously reviewed paths
+  (4 workers), only when a session with marks exists for the branch. `--no-session` opts out.
+- Open decisions: `Q` does not touch the session's reviewed marks (marks are not annotations); an emptied session is
+  rewritten as empty so removed marks cannot resurrect.

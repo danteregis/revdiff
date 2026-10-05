@@ -11,6 +11,7 @@ import (
 
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/refsource"
+	"github.com/umputun/revdiff/app/session"
 	"github.com/umputun/revdiff/app/ui/overlay"
 )
 
@@ -39,6 +40,7 @@ type reviewTarget struct {
 	staged   bool
 	id       string // overlay item ID, empty for a typed ref
 	label    string // short display name, e.g. "PR #12" or "branch feature"; empty for typed refs and the original
+	branch   string // review-session branch key when known (switcher branch, PR head); empty derives it from ref
 	original bool   // true when returning to the review revdiff was started with
 }
 
@@ -275,7 +277,7 @@ func (m Model) handleRefChoice(c *overlay.RefChoice) (tea.Model, tea.Cmd) {
 				m.refs.hint = fmt.Sprintf("%s is the base branch, nothing to compare — type a ref such as %s~5..%s instead", m.oneLine(name), m.oneLine(name), m.oneLine(name))
 				return m, nil
 			}
-			cmd := m.requestRefSwitch(reviewTarget{ref: b.Ref, id: c.ID, label: "branch " + m.oneLine(name)})
+			cmd := m.requestRefSwitch(reviewTarget{ref: b.Ref, id: c.ID, label: "branch " + m.oneLine(name), branch: name})
 			return m, cmd
 		}
 		return m, nil
@@ -284,15 +286,27 @@ func (m Model) handleRefChoice(c *overlay.RefChoice) (tea.Model, tea.Cmd) {
 		if err != nil {
 			return m, nil
 		}
-		id, label := c.ID, "PR #"+strconv.Itoa(n)
+		id, label, head := c.ID, "PR #"+strconv.Itoa(n), m.pullRequestHead(n)
 		m.refs.hint = "Fetching " + label + "…"
 		return m, func() tea.Msg {
 			ref, err := src.PullRequestRef(n)
-			return refResolvedMsg{seq: seq, target: reviewTarget{ref: ref, id: id, label: label}, err: err}
+			return refResolvedMsg{seq: seq, target: reviewTarget{ref: ref, id: id, label: label, branch: head}, err: err}
 		}
 	default:
 		return m, nil
 	}
+}
+
+// pullRequestHead returns the head branch name of pull request n from the loaded
+// list, or "" when it is not listed. A pull request's review session belongs to
+// its head branch, so it is shared with a local checkout of that branch.
+func (m Model) pullRequestHead(n int) string {
+	for _, pr := range m.refs.prs {
+		if pr.Number == n {
+			return pr.Head
+		}
+	}
+	return ""
 }
 
 func (m Model) handleRefResolved(msg refResolvedMsg) (tea.Model, tea.Cmd) {
@@ -380,6 +394,10 @@ func (m *Model) switchRef(t reviewTarget) tea.Cmd {
 	m.refs.activeID = t.id
 	m.refs.label = t.label
 	m.refs.hint = "Reviewing " + m.targetLabel(t)
+	// every mutation has already been saved, so the current session is simply
+	// left behind; the target's session is validated by the reload below.
+	m.session.present = nil
+	m.openSession(session.Request{Ref: t.ref, Staged: t.staged, Branch: t.branch})
 	return m.triggerReload()
 }
 
