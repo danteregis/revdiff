@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/editor"
 )
@@ -228,7 +229,7 @@ func (m Model) sourceEditorTarget() (sourceEditorTargetResult, error) {
 
 func (m Model) hasCurrentFileLineAnnotations() bool {
 	for _, a := range m.store.Get(m.file.name) {
-		if a.Line > 0 {
+		if a.Line > 0 && a.Status == annotation.StatusOpen {
 			return true
 		}
 	}

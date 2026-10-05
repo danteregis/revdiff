@@ -32,9 +32,27 @@ func (m Model) buildAnnotListSpec() overlay.AnnotListSpec {
 			AnnotationTarget: overlay.AnnotationTarget{File: a.File, ChangeType: a.Type, Line: a.Line},
 			Comment:          a.Comment,
 			Kind:             a.Kind,
+			Status:           m.annotationStatusLabel(a),
+		}
+		if a.Line < 0 && a.Anchor != nil {
+			items[i].WasLine = a.Anchor.Line
 		}
 	}
 	return overlay.AnnotListSpec{Items: items}
+}
+
+// annotationStatusLabel names an annotation's review state for the list:
+// "outdated", "resolved", "sent" (delivered and still open), or "" for a
+// pending one.
+func (m Model) annotationStatusLabel(a annotation.Annotation) string {
+	switch {
+	case a.Status != annotation.StatusOpen:
+		return string(a.Status)
+	case a.Delivered:
+		return "sent"
+	default:
+		return ""
+	}
 }
 
 // jumpToAnnotationTarget jumps to an annotation target returned by the overlay

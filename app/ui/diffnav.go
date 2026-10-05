@@ -775,12 +775,8 @@ func (m Model) handleDiffAction(action keymap.Action) (tea.Model, tea.Cmd) {
 	case keymap.ActionScrollBottom:
 		m.bottomAlignViewportOnCursor()
 		return m, nil
-	case keymap.ActionDeleteAnnotation:
-		cmd := m.deleteAnnotation()
-		return m, cmd
-	case keymap.ActionQuickPraise:
-		m.quickPraise()
-		return m, nil
+	case keymap.ActionDeleteAnnotation, keymap.ActionQuickPraise, keymap.ActionResolveAnnotation:
+		return m.handleAnnotationAction(action)
 	case keymap.ActionToggleHunk:
 		m.toggleHunkExpansion()
 		return m, nil

@@ -102,6 +102,8 @@ type AnnotationItem struct {
 	AnnotationTarget
 	Comment string
 	Kind    string
+	Status  string // review state badge ("outdated", "resolved", "sent"); empty for a pending annotation
+	WasLine int    // original line of an outdated annotation detached from the diff (Line < 0); 0 otherwise
 }
 
 // AnnotationTarget identifies the jump destination for an annotation list selection.

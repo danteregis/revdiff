@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/ui/worddiff"
 )
@@ -23,6 +24,10 @@ import (
 func (m Model) loadFiles() tea.Cmd {
 	seq := m.filesLoadSeq
 	reviewed := m.tree.ReviewedFingerprints()
+	var annotationsBefore map[string][]annotation.Annotation
+	if m.sessionsActive() {
+		annotationsBefore = m.store.All()
+	}
 	return func() tea.Msg {
 		var warnings []string
 		entries, err := m.diffRenderer.ChangedFiles(m.cfg.ref, m.cfg.staged)
@@ -63,11 +68,15 @@ func (m Model) loadFiles() tea.Cmd {
 		}
 		fingerprints, fingerprintWarnings := m.loadReviewedFingerprints(entries, reviewed)
 		warnings = append(warnings, fingerprintWarnings...)
+		reanchored, reanchorWarnings := m.reanchorAnnotations(entries, annotationsBefore)
+		warnings = append(warnings, reanchorWarnings...)
 		return filesLoadedMsg{
 			seq:                  seq,
 			entries:              entries,
 			reviewedBefore:       reviewed,
 			reviewedFingerprints: fingerprints,
+			annotationsBefore:    annotationsBefore,
+			reanchored:           reanchored,
 			warnings:             warnings,
 		}
 	}
@@ -471,6 +480,7 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 	m.reviewed.cache = make(map[string]string, len(msg.reviewedFingerprints))
 	maps.Copy(m.reviewed.cache, msg.reviewedFingerprints)
 	m.setSessionPresent(diff.FileEntryPaths(entries))
+	m.applyReanchored(msg, entries)
 	m.finishSessionNote()
 	if m.tree.FilterActive() {
 		m.tree.RefreshFilter(m.annotatedFiles())

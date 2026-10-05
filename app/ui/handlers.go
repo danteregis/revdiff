@@ -161,10 +161,13 @@ func (m Model) buildTOCHelpSection() overlay.HelpSection {
 	}
 }
 
-// handleDiscardQuit handles the Q key press for discard-and-quit.
+// handleDiscardQuit handles the Q key press for discard-and-quit. Only pending
+// annotations are discarded (and, with a review session, removed from it);
+// confirmation is asked only when there are some.
 func (m Model) handleDiscardQuit() (tea.Model, tea.Cmd) {
-	if m.store.Count() == 0 || m.cfg.noConfirmDiscard || m.cfg.noStatusBar {
+	if m.store.PendingCount() == 0 || m.cfg.noConfirmDiscard || m.cfg.noStatusBar {
 		m.discarded = true
+		m.discardPendingAnnotations()
 		return m, tea.Quit
 	}
 	m.inConfirmDiscard = true
@@ -227,6 +230,7 @@ func (m Model) handleConfirmDiscardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Q":
 		m.discarded = true
+		m.discardPendingAnnotations()
 		return m, tea.Quit
 	case "n", "esc":
 		m.inConfirmDiscard = false

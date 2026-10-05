@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 )
 
@@ -273,6 +274,34 @@ func TestStore_OpenSave(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, got.FingerprintMismatch, "a save rewrites the version")
 		assert.Equal(t, diff.FileFingerprintVersion, got.Session.FingerprintVersion)
+	})
+
+	t.Run("annotations alone are state and round-trip", func(t *testing.T) {
+		repo := newRepo(t)
+		s := newTestStore(t, repo)
+		opened, err := s.Open(Request{})
+		require.NoError(t, err)
+		a := annotation.Annotation{File: "b.go", Line: 1, Type: "+", Comment: "why", Kind: "question",
+			Status: annotation.StatusOutdated, Delivered: true,
+			Anchor: &annotation.Anchor{Line: 1, Type: "+", Content: "two", After: []string{"x"}}}
+		opened.Session.Annotations = []annotation.Annotation{a}
+		require.NoError(t, s.Save(opened.Session))
+		got, err := s.Open(Request{})
+		require.NoError(t, err)
+		require.True(t, got.Resumed)
+		assert.Equal(t, []annotation.Annotation{a}, got.Session.Annotations)
+	})
+
+	t.Run("annotation without a file makes the session unreadable", func(t *testing.T) {
+		repo := newRepo(t)
+		s := newTestStore(t, repo)
+		s.warnLog = func(string, ...any) {}
+		dir := s.branchDir("feature")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "x.json"), []byte(`{"version":1,"annotations":[{"line":1}]}`), 0o600))
+		got, err := s.Open(Request{})
+		require.NoError(t, err)
+		assert.False(t, got.Resumed)
 	})
 
 	t.Run("emptied session is still rewritten", func(t *testing.T) {

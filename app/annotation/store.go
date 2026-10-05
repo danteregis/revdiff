@@ -11,12 +11,38 @@ import (
 
 // Annotation represents a user comment on a specific diff line.
 type Annotation struct {
-	File    string // file path relative to repo root
-	Line    int    // line number in the diff
-	EndLine int    // end line of hunk range, 0 means no range
-	Type    string // change type: "+", "-", or " "
-	Comment string // user comment text; may be empty when Kind is set
-	Kind    string // optional label from Kinds() (e.g. "praise"); empty for a plain comment
+	File    string `json:"file"`               // file path relative to repo root
+	Line    int    `json:"line"`               // line number in the diff
+	EndLine int    `json:"end_line,omitempty"` // end line of hunk range, 0 means no range
+	Type    string `json:"type"`               // change type: "+", "-", or " "
+	Comment string `json:"comment,omitempty"`  // user comment text; may be empty when Kind is set
+	Kind    string `json:"kind,omitempty"`     // optional label from Kinds() (e.g. "praise"); empty for a plain comment
+	// Status is the review state: open (the zero value), outdated (the code it
+	// was written on changed), or resolved (closed by the reviewer).
+	Status Status `json:"status,omitempty"`
+	// Delivered is true once the annotation was handed to the agent (exit
+	// output or an O flush) and has not been edited since. Delivered
+	// annotations are not output again.
+	Delivered bool `json:"delivered,omitempty"`
+	// Anchor snapshots the annotated line so the annotation can be re-anchored
+	// after the code changes; nil for file-level annotations and when unknown.
+	Anchor *Anchor `json:"anchor,omitempty"`
+}
+
+// Status is the review state of an annotation.
+type Status string
+
+// annotation states. StatusOpen is the zero value.
+const (
+	StatusOpen     Status = ""
+	StatusOutdated Status = "outdated"
+	StatusResolved Status = "resolved"
+)
+
+// Pending reports whether the annotation still has to be sent to the agent:
+// open (not outdated or resolved) and not delivered since its last edit.
+func (a Annotation) Pending() bool {
+	return a.Status == StatusOpen && !a.Delivered
 }
 
 // Store holds annotations in memory, keyed by filename.
@@ -30,16 +56,89 @@ func NewStore() *Store {
 }
 
 // Add adds an annotation for the given file and line.
-// If an annotation already exists at the same file:line, it is replaced.
+// If an annotation already exists at the same file:line:type, it is replaced
+// as a whole (comment, range, kind, status, delivery and anchor).
 func (s *Store) Add(a Annotation) {
 	existing := s.annotations[a.File]
 	if i, ok := s.find(a.File, a.Line, a.Type); ok {
-		existing[i].Comment = a.Comment
-		existing[i].EndLine = a.EndLine
-		existing[i].Kind = a.Kind
+		existing[i] = a
 		return
 	}
 	s.annotations[a.File] = append(existing, a)
+}
+
+// ReplaceFile replaces every annotation of file with anns (all of which must
+// belong to file). An empty anns removes the file.
+func (s *Store) ReplaceFile(file string, anns []Annotation) {
+	if len(anns) == 0 {
+		delete(s.annotations, file)
+		return
+	}
+	s.annotations[file] = append([]Annotation(nil), anns...)
+}
+
+// PendingCount returns the number of annotations FormatOutput would emit.
+func (s *Store) PendingCount() int {
+	count := 0
+	for _, anns := range s.annotations {
+		for _, a := range anns {
+			if a.Pending() {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// PendingFiles returns the files that have pending annotations, sorted.
+func (s *Store) PendingFiles() []string {
+	var files []string
+	for _, file := range s.Files() {
+		for _, a := range s.annotations[file] {
+			if a.Pending() {
+				files = append(files, file)
+				break
+			}
+		}
+	}
+	return files
+}
+
+// MarkDelivered marks every pending annotation delivered and returns how many
+// were marked.
+func (s *Store) MarkDelivered() int {
+	n := 0
+	for _, anns := range s.annotations {
+		for i := range anns {
+			if anns[i].Pending() {
+				anns[i].Delivered = true
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// DiscardPending deletes every pending annotation and returns how many were
+// removed; delivered, outdated and resolved annotations are kept.
+func (s *Store) DiscardPending() int {
+	n := 0
+	for file, anns := range s.annotations {
+		kept := make([]Annotation, 0, len(anns))
+		for _, a := range anns {
+			if a.Pending() {
+				n++
+				continue
+			}
+			kept = append(kept, a)
+		}
+		if len(kept) == 0 {
+			delete(s.annotations, file)
+			continue
+		}
+		s.annotations[file] = kept
+	}
+	return n
 }
 
 // Delete removes the annotation at the given file, line and change type.
@@ -77,8 +176,19 @@ func (s *Store) find(file string, line int, changeType string) (int, bool) {
 func (s *Store) Get(file string) []Annotation {
 	result := make([]Annotation, len(s.annotations[file]))
 	copy(result, s.annotations[file])
-	sort.Slice(result, func(i, j int) bool { return result[i].Line < result[j].Line })
+	s.sortByLine(result)
 	return result
+}
+
+// sortByLine orders annotations by line, then change type, so equal lines on
+// the old and new side (e.g. "-5" and "+5") always come out in the same order.
+func (s *Store) sortByLine(anns []Annotation) {
+	sort.SliceStable(anns, func(i, j int) bool {
+		if anns[i].Line != anns[j].Line {
+			return anns[i].Line < anns[j].Line
+		}
+		return anns[i].Type < anns[j].Type
+	})
 }
 
 // Count returns the total number of annotations across all files.
@@ -101,7 +211,7 @@ func (s *Store) All() map[string][]Annotation {
 	for file, anns := range s.annotations {
 		copied := make([]Annotation, len(anns))
 		copy(copied, anns)
-		sort.Slice(copied, func(i, j int) bool { return copied[i].Line < copied[j].Line })
+		s.sortByLine(copied)
 		result[file] = copied
 	}
 	return result
@@ -135,7 +245,10 @@ func (s *Store) Load(r io.Reader) error {
 
 // FormatOutput produces the structured output format for stdout.
 // Files are sorted alphabetically, annotations within each file by line number.
-// Returns empty string if no annotations exist.
+// Only pending annotations (open and not yet delivered, see Annotation.Pending)
+// are emitted: outdated and resolved annotations are never output, and a
+// delivered one is output again only after it is edited. Returns empty string
+// when nothing is pending.
 //
 // Body lines that start with "## " (the record-header form) are prefixed with a
 // single space on output so parsers that split on "## " record headers cannot
@@ -148,7 +261,7 @@ func (s *Store) Load(r io.Reader) error {
 // start of the body ("kind: text", or the bare "kind" for an empty comment);
 // the record header grammar is unchanged and untyped bodies are emitted as-is.
 func (s *Store) FormatOutput() string {
-	if len(s.annotations) == 0 {
+	if s.PendingCount() == 0 {
 		return ""
 	}
 
@@ -159,6 +272,9 @@ func (s *Store) FormatOutput() string {
 	for _, file := range files {
 		anns := s.Get(file) // sorted by line: file-level (0) first, then ascending
 		for _, a := range anns {
+			if !a.Pending() {
+				continue
+			}
 			if !first {
 				buf.WriteString("\n")
 			}

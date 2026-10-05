@@ -19,16 +19,24 @@ type postFlushFinishedMsg struct {
 	successHint  string
 	failureHint  string
 	restoreMouse bool
+	deliver      bool // mark the flushed annotations delivered once the command succeeds
 }
 
-// handleFlushOutput exports the current annotations through the configured
-// output file and/or post-flush command without exiting. The store is never
-// mutated, so annotations persist in-session and can be re-flushed. Feedback
-// is reported through output.hint.
+// handleFlushOutput exports the pending annotations (open and not yet
+// delivered) through the configured output file and/or post-flush command
+// without exiting. Without a review session the store is never mutated, so
+// annotations persist in-session and can be re-flushed. With a session the
+// flushed annotations are marked delivered — when the file is written, or for
+// a command-only flush when the command succeeds — so the next flush or the
+// exit output carries only what was added or edited since. Feedback is
+// reported through output.hint.
 func (m Model) handleFlushOutput() (tea.Model, tea.Cmd) {
-	n := m.store.Count()
+	n := m.store.PendingCount()
 	if n == 0 {
 		m.output.hint = "No annotations to flush"
+		if m.store.Count() > 0 {
+			m.output.hint = "No new annotations to flush"
+		}
 		return m, nil
 	}
 	if m.cfg.outputPath == "" && m.postFlushHook == nil {
@@ -50,6 +58,7 @@ func (m Model) handleFlushOutput() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		writtenHint = fmt.Sprintf("Wrote %d %s to output file", n, noun)
+		m.MarkDelivered()
 	} else {
 		content = m.store.FormatOutput()
 	}
@@ -69,12 +78,14 @@ func (m Model) handleFlushOutput() (tea.Model, tea.Cmd) {
 	}
 	cmd := m.postFlushHook.Prepare(content)
 	m.output.hint = runningHint
+	deliver := writtenHint == ""
 	return m, tea.ExecProcess(cmd, func(runErr error) tea.Msg {
 		return postFlushFinishedMsg{
 			err:          runErr,
 			successHint:  successHint,
 			failureHint:  failureHint,
 			restoreMouse: m.cfg.mouseTracking,
+			deliver:      deliver,
 		}
 	})
 }
@@ -90,5 +101,12 @@ func (m Model) handlePostFlushFinished(msg postFlushFinishedMsg) (tea.Model, tea
 		return m, cmd
 	}
 	m.output.hint = msg.successHint
+	if msg.deliver {
+		m.MarkDelivered()
+		m.invalidateRenderCaches()
+		if m.file.name != "" {
+			m.layout.viewport.SetContent(m.renderDiff())
+		}
+	}
 	return m, cmd
 }

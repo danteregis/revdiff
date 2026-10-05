@@ -669,8 +669,13 @@ type filesLoadedMsg struct {
 	entries              []diff.FileEntry
 	reviewedBefore       map[string]string // reviewed snapshot captured when this load began
 	reviewedFingerprints map[string]string // refreshed identities for paths reviewed before this load
-	err                  error
-	warnings             []string // non-fatal issues (staged/untracked/fingerprint failures)
+	// annotationsBefore is the annotation store captured when this load began
+	// (sessions only); reanchored holds the re-anchored set of each file in it
+	// that is still in the diff.
+	annotationsBefore map[string][]annotation.Annotation
+	reanchored        map[string][]annotation.Annotation
+	err               error
+	warnings          []string // non-fatal issues (staged/untracked/fingerprint failures)
 }
 
 // commitsLoadedMsg is sent when the commit log for the current ref range is loaded.
@@ -757,6 +762,10 @@ type ModelConfig struct {
 	// NewSession starts a fresh session instead of resuming one. Ignored when
 	// Sessions is nil.
 	NewSession bool
+	// PreloadedAnnotations is true when Store was seeded from --annotations:
+	// those annotations replace the session's instead of being replaced by
+	// them. Ignored when Sessions is nil.
+	PreloadedAnnotations bool
 	// CommitLog enumerates commits in the current ref range for the info popup's
 	// commit-log section. When nil, NewModel attempts to derive the source by
 	// type-asserting the Renderer against diff.CommitLogger; if the assertion
@@ -1009,7 +1018,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 				reviewCfg:         reviewCfg,
 			},
 		},
-		session: sessionState{store: sessions},
+		session: sessionState{store: sessions, preloaded: cfg.PreloadedAnnotations},
 	}
 	m.openSession(session.Request{Ref: cfg.Ref, Staged: cfg.Staged, Name: cfg.SessionName, Fresh: cfg.NewSession})
 	return m, nil
@@ -1340,13 +1349,21 @@ func (m Model) handleReviewStateAction(action keymap.Action) (tea.Model, tea.Cmd
 }
 
 // handleReload handles the ActionReload key. In stdin mode the feature is
-// unavailable. If no annotations exist, reloads immediately. If annotations
-// exist, enters pending-confirmation state (waiting for y/other key in
-// handlePendingReload).
+// unavailable. With a review session the reload keeps annotations and
+// re-anchors them (outdated ones are flagged), so it never asks. Otherwise, if
+// no annotations exist, reloads immediately; if annotations exist, enters
+// pending-confirmation state (waiting for y/other key in handlePendingReload)
+// because the reload drops them.
 func (m Model) handleReload() (tea.Model, tea.Cmd) {
 	if !m.reload.applicable {
 		m.reload.hint = "Reload not available in stdin mode"
 		return m, nil
+	}
+	if m.sessionsActive() {
+		// annotations are kept and re-anchored against the reloaded diff
+		m.reload.hint = "Reloaded"
+		cmd := m.triggerReload()
+		return m, cmd
 	}
 	if m.store.Count() > 0 && !m.cfg.noStatusBar && !m.cfg.noConfirmReload {
 		m.reload.pending = true

@@ -1,6 +1,6 @@
 // Package session persists revdiff review sessions: which files were marked
-// reviewed (and at which semantic diff fingerprint) and, from phase 2 on, the
-// annotations written during the review. Sessions are attached to a git branch
+// reviewed (and at which semantic diff fingerprint) and the annotations written
+// during the review, with their status, delivery state and anchors. Sessions are attached to a git branch
 // so a review can be resumed after the code under review changes.
 //
 // Layout on disk:
@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/fsutil"
 )
@@ -55,11 +56,14 @@ type Session struct {
 	// of the content the reviewer approved. A path whose current fingerprint
 	// differs is "changed since review".
 	Reviewed map[string]string `json:"reviewed,omitempty"`
+	// Annotations are every annotation of the review, including outdated,
+	// resolved and delivered ones, each with the anchor used to find it again.
+	Annotations []annotation.Annotation `json:"annotations,omitempty"`
 }
 
 // empty reports whether the session carries no review state worth persisting.
 func (s *Session) empty() bool {
-	return len(s.Reviewed) == 0
+	return len(s.Reviewed) == 0 && len(s.Annotations) == 0
 }
 
 // Request selects the session Open returns.
@@ -265,6 +269,11 @@ func (s *Store) read(path string) (*Session, error) {
 	sess.ID = strings.TrimSuffix(filepath.Base(path), ".json")
 	if sess.Reviewed == nil {
 		sess.Reviewed = map[string]string{}
+	}
+	for i := range sess.Annotations {
+		if sess.Annotations[i].File == "" {
+			return nil, fmt.Errorf("%s: annotation %d has no file", path, i)
+		}
 	}
 	return &sess, nil
 }

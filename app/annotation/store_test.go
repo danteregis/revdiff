@@ -600,3 +600,55 @@ func TestStore_Count(t *testing.T) {
 	s.Delete("a.go", 1, "+")
 	assert.Equal(t, 2, s.Count(), "count should decrease after delete")
 }
+
+func TestStore_AddReplacesWholeAnnotation(t *testing.T) {
+	s := NewStore()
+	s.Add(Annotation{File: "a.go", Line: 1, Type: "+", Comment: "x", Delivered: true, Status: StatusResolved,
+		Anchor: &Anchor{Line: 1, Type: "+", Content: "c"}})
+	s.Add(Annotation{File: "a.go", Line: 1, Type: "+", Comment: "edited"})
+	got := s.Get("a.go")
+	require.Len(t, got, 1)
+	assert.Equal(t, Annotation{File: "a.go", Line: 1, Type: "+", Comment: "edited"}, got[0],
+		"an edit reopens and undelivers the annotation")
+}
+
+func TestStore_PendingOutput(t *testing.T) {
+	s := NewStore()
+	s.Add(Annotation{File: "a.go", Line: 1, Type: "+", Comment: "new"})
+	s.Add(Annotation{File: "a.go", Line: 2, Type: "+", Comment: "sent", Delivered: true})
+	s.Add(Annotation{File: "b.go", Line: 3, Type: "+", Comment: "stale", Status: StatusOutdated})
+	s.Add(Annotation{File: "c.go", Line: 4, Type: "+", Comment: "done", Status: StatusResolved})
+
+	assert.Equal(t, 4, s.Count())
+	assert.Equal(t, 1, s.PendingCount())
+	assert.Equal(t, []string{"a.go"}, s.PendingFiles())
+	assert.Equal(t, "## a.go:1 (+)\nnew\n", s.FormatOutput())
+
+	assert.Equal(t, 1, s.MarkDelivered())
+	assert.Empty(t, s.FormatOutput())
+	assert.Equal(t, 0, s.PendingCount())
+	assert.Equal(t, 0, s.MarkDelivered())
+	assert.Equal(t, 4, s.Count(), "delivery keeps annotations")
+}
+
+func TestStore_DiscardPending(t *testing.T) {
+	s := NewStore()
+	s.Add(Annotation{File: "a.go", Line: 1, Type: "+", Comment: "new"})
+	s.Add(Annotation{File: "b.go", Line: 1, Type: "+", Comment: "only pending"})
+	s.Add(Annotation{File: "a.go", Line: 2, Type: "+", Comment: "sent", Delivered: true})
+	s.Add(Annotation{File: "a.go", Line: 3, Type: "+", Comment: "done", Status: StatusResolved})
+	assert.Equal(t, 2, s.DiscardPending())
+	assert.Equal(t, []string{"a.go"}, s.Files())
+	assert.Len(t, s.Get("a.go"), 2)
+}
+
+func TestStore_ReplaceFile(t *testing.T) {
+	s := NewStore()
+	s.Add(Annotation{File: "a.go", Line: 1, Type: "+", Comment: "x"})
+	repl := []Annotation{{File: "a.go", Line: 5, Type: "+", Comment: "moved"}}
+	s.ReplaceFile("a.go", repl)
+	repl[0].Comment = "mutated after"
+	assert.Equal(t, []Annotation{{File: "a.go", Line: 5, Type: "+", Comment: "moved"}}, s.Get("a.go"))
+	s.ReplaceFile("a.go", nil)
+	assert.Empty(t, s.Files())
+}

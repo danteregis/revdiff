@@ -227,10 +227,25 @@ func (m *Model) retagAnnotation(fileName string, line int, changeType, kind stri
 			continue
 		}
 		a.Kind = kind
+		a.Status, a.Delivered = annotation.StatusOpen, false // an edit reopens and re-sends it
+		if anchor := m.anchorFor(fileName, line, changeType); anchor != nil {
+			a.Anchor = anchor
+		}
 		m.store.Add(a)
+		m.saveSession()
 		return true
 	}
 	return false
+}
+
+// anchorFor captures the re-anchoring snapshot for the line (line, changeType)
+// of fileName when that file is the one loaded; nil otherwise and for
+// file-level targets.
+func (m Model) anchorFor(fileName string, line int, changeType string) *annotation.Anchor {
+	if line <= 0 || fileName != m.file.name {
+		return nil
+	}
+	return annotation.NewAnchor(m.file.lines, m.findDiffLineIndex(line, changeType))
 }
 
 // saveComment persists the annotation text for the explicitly provided target.
@@ -251,6 +266,7 @@ func (m *Model) saveComment(text, kind, fileName string, fileLevel bool, line in
 
 	if fileLevel {
 		m.store.Add(annotation.Annotation{File: fileName, Line: 0, Type: "", Comment: text, Kind: kind})
+		m.saveSession()
 		m.annot.annotating = false
 		m.annot.fileAnnotating = false
 		m.annot.existingMultiline = ""
@@ -262,7 +278,8 @@ func (m *Model) saveComment(text, kind, fileName string, fileLevel bool, line in
 		return
 	}
 
-	a := annotation.Annotation{File: fileName, Line: line, Type: changeType, Comment: text, Kind: kind}
+	a := annotation.Annotation{File: fileName, Line: line, Type: changeType, Comment: text, Kind: kind,
+		Anchor: m.anchorFor(fileName, line, changeType)}
 	if hunkKeywordRe.MatchString(text) && fileName == m.file.name {
 		// re-derive the diff-line index from (line, changeType) so hunk-end
 		// detection survives cursor drift during an external editor session.
@@ -282,6 +299,7 @@ func (m *Model) saveComment(text, kind, fileName string, fileLevel bool, line in
 		}
 	}
 	m.store.Add(a)
+	m.saveSession()
 	m.annot.annotating = false
 	m.annot.fileAnnotating = false // defensive hygiene: parity with file-level branch
 	m.annot.existingMultiline = ""
@@ -290,6 +308,58 @@ func (m *Model) saveComment(text, kind, fileName string, fileLevel bool, line in
 	// sync scroll so a newly added multi-row annotation stays visible when the
 	// cursor sits near the bottom of the viewport.
 	m.syncViewportToCursor()
+}
+
+// handleAnnotationAction runs the diff-pane actions that change the annotation
+// under the cursor: delete, quick praise, and resolve/reopen.
+func (m Model) handleAnnotationAction(action keymap.Action) (tea.Model, tea.Cmd) {
+	switch action {
+	case keymap.ActionDeleteAnnotation:
+		cmd := m.deleteAnnotation()
+		return m, cmd
+	case keymap.ActionQuickPraise:
+		m.quickPraise()
+	case keymap.ActionResolveAnnotation:
+		m.toggleResolveAnnotation()
+	default:
+	}
+	return m, nil
+}
+
+// toggleResolveAnnotation resolves the open annotation of the cursor line (or
+// of the file-level annotation line), or reopens a resolved or outdated one.
+// Resolving closes the comment: it is never output again. Reopening makes it
+// open and undelivered, re-anchored at the line it is shown on, so it is sent
+// with the next output.
+func (m *Model) toggleResolveAnnotation() {
+	line, changeType := 0, ""
+	if !m.cursorOnFileAnnotationLine() {
+		dl, ok := m.cursorDiffLine()
+		if !ok || dl.ChangeType == diff.ChangeDivider {
+			return
+		}
+		line, changeType = m.diffLineNum(dl), string(dl.ChangeType)
+	}
+	for _, a := range m.store.Get(m.file.name) {
+		if a.Line != line || a.Type != changeType {
+			continue
+		}
+		if a.Status == annotation.StatusOpen {
+			a.Status = annotation.StatusResolved
+			m.session.hint = "Annotation resolved — it will not be sent again; x reopens it"
+		} else {
+			a.Status, a.Delivered = annotation.StatusOpen, false
+			if anchor := m.anchorFor(m.file.name, line, changeType); anchor != nil {
+				a.Anchor = anchor
+			}
+			m.session.hint = "Annotation reopened — it will be sent with the next output"
+		}
+		m.store.Add(a)
+		m.saveSession()
+		m.syncViewportToCursor()
+		return
+	}
+	m.session.hint = "No annotation on this line"
 }
 
 // quickPraise tags the cursor line, or the file-level annotation line, as
@@ -313,7 +383,9 @@ func (m *Model) quickPraise() {
 	}
 	line, changeType := m.diffLineNum(dl), string(dl.ChangeType)
 	if !m.retagAnnotation(m.file.name, line, changeType, annotation.KindPraise) {
-		m.store.Add(annotation.Annotation{File: m.file.name, Line: line, Type: changeType, Kind: annotation.KindPraise})
+		m.store.Add(annotation.Annotation{File: m.file.name, Line: line, Type: changeType, Kind: annotation.KindPraise,
+			Anchor: annotation.NewAnchor(m.file.lines, m.nav.diffCursor)})
+		m.saveSession()
 		m.tree.RefreshFilter(m.annotatedFiles())
 	}
 	m.syncViewportToCursor()
@@ -333,6 +405,7 @@ func (m *Model) deleteFileAnnotation() tea.Cmd {
 	if !m.store.Delete(m.file.name, 0, "") {
 		return nil
 	}
+	m.saveSession()
 	m.pendingAnnotJump = nil    // clear before refreshFilter which may trigger file load
 	m.nav.pendingHunkJump = nil // clear before refreshFilter which may trigger file load
 	m.skipInitialDividers()
@@ -367,6 +440,7 @@ func (m *Model) deleteAnnotation() tea.Cmd {
 
 	lineNum := m.diffLineNum(dl)
 	if m.store.Delete(m.file.name, lineNum, string(dl.ChangeType)) {
+		m.saveSession()
 		m.pendingAnnotJump = nil    // clear before refreshFilter which may trigger file load
 		m.nav.pendingHunkJump = nil // clear before refreshFilter which may trigger file load
 		m.annot.cursorOnAnnotation = false
@@ -412,14 +486,41 @@ func (m Model) kindBadge(kind string) string {
 	return "[" + kind + "] "
 }
 
-// annotationDisplayBody returns the text painted for a saved annotation: the
-// kind badge followed by the comment. Folding the badge into the body keeps it
-// inside annotationVisualRows' cache key and the diff render cache's comment flag.
+// status badges painted before an annotation's kind badge. The outdated and
+// resolved badges also dim the annotation's rows (see annotationDimmed).
+const (
+	badgeOutdated = "[outdated] "
+	badgeResolved = "[resolved] "
+	badgeSent     = "[sent] "
+)
+
+// annotationDisplayBody returns the text painted for a saved annotation: a
+// status badge (outdated, resolved, or sent for a delivered open one), the
+// kind badge, then the comment. Folding the badges into the body keeps them
+// inside annotationVisualRows' cache key and the diff render cache's comment
+// flag, so a status change repaints without any extra invalidation.
 func (m Model) annotationDisplayBody(a annotation.Annotation) string {
-	if a.Comment == "" {
-		return strings.TrimSuffix(m.kindBadge(a.Kind), " ")
+	status := ""
+	switch {
+	case a.Status == annotation.StatusOutdated:
+		status = badgeOutdated
+	case a.Status == annotation.StatusResolved:
+		status = badgeResolved
+	case a.Delivered:
+		status = badgeSent
 	}
-	return m.kindBadge(a.Kind) + a.Comment
+	if a.Comment == "" {
+		return strings.TrimSuffix(status+m.kindBadge(a.Kind), " ")
+	}
+	return status + m.kindBadge(a.Kind) + a.Comment
+}
+
+// annotationDimmed reports whether a display body belongs to an outdated or
+// resolved annotation, whose rows paint faint. It reads the badge
+// annotationDisplayBody put in front, the only producer of that prefix.
+func (m Model) annotationDimmed(body string) bool {
+	return strings.HasPrefix(body, badgeOutdated) || strings.HasPrefix(body, badgeResolved) ||
+		body == strings.TrimSuffix(badgeOutdated, " ") || body == strings.TrimSuffix(badgeResolved, " ")
 }
 
 // annotInputPrefix returns the prefix painted before the live annotation input:
@@ -594,6 +695,7 @@ func (m Model) composeAnnotationRows(prefix, body string, wrapW int) []string {
 	logical := strings.Split(first, "\n")
 	indent := strings.Repeat(" ", lipgloss.Width(prefix))
 
+	dim := m.annotationDimmed(body)
 	var rows []string
 	for i, segment := range logical {
 		if i > 0 {
@@ -606,7 +708,11 @@ func (m Model) composeAnnotationRows(prefix, body string, wrapW int) []string {
 			lines = []string{segment}
 		}
 		for _, line := range lines {
-			rows = append(rows, m.renderer.AnnotationInline(line))
+			row := m.renderer.AnnotationInline(line)
+			if dim {
+				row = "\033[2m" + row + "\033[22m" // faint on/off only, so pane and line backgrounds survive
+			}
+			rows = append(rows, row)
 		}
 	}
 	return rows

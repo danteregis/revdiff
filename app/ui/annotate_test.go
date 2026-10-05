@@ -3507,7 +3507,9 @@ func TestModel_AnnotationKindSavedWithText(t *testing.T) {
 
 	anns := m.store.Get("a.go")
 	require.Len(t, anns, 1)
-	assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, Type: "+", Comment: "off by one", Kind: "bug"}, anns[0])
+	require.NotNil(t, anns[0].Anchor, "a line annotation records its anchor")
+	assert.Equal(t, 2, anns[0].Anchor.Line)
+	assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, Type: "+", Comment: "off by one", Kind: "bug"}, withoutAnchor(anns[0]))
 	assert.False(t, m.annot.annotating)
 	assert.Empty(t, m.annot.kind, "kind is cleared on save")
 	assert.Contains(t, m.renderDiff(), "[bug] off by one")
@@ -3560,7 +3562,7 @@ func TestModel_AnnotationKindRetagsExistingMultiline(t *testing.T) {
 
 	anns := m.store.Get("a.go")
 	require.Len(t, anns, 1)
-	assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, EndLine: 9, Type: "+", Comment: "first\nsecond", Kind: "bug"}, anns[0],
+	assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, EndLine: 9, Type: "+", Comment: "first\nsecond", Kind: "bug"}, withoutAnchor(anns[0]),
 		"empty enter keeps the multi-line comment and range, updating only the kind")
 	assert.False(t, m.annot.annotating)
 	assert.Empty(t, m.annot.existingMultiline)
@@ -3609,6 +3611,13 @@ func TestModel_FileAnnotationKind(t *testing.T) {
 	assert.Equal(t, "suggestion", m.annot.kind)
 }
 
+// withoutAnchor returns a with its re-anchoring snapshot cleared, for
+// comparisons that care about the annotation's content only.
+func withoutAnchor(a annotation.Annotation) annotation.Annotation {
+	a.Anchor = nil
+	return a
+}
+
 func TestModel_QuickPraise(t *testing.T) {
 	t.Run("adds a comment-less praise", func(t *testing.T) {
 		m := kindTestModel()
@@ -3617,7 +3626,8 @@ func TestModel_QuickPraise(t *testing.T) {
 		assert.False(t, m.annot.annotating, "quick praise opens no input")
 		anns := m.store.Get("a.go")
 		require.Len(t, anns, 1)
-		assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, Type: "+", Kind: "praise"}, anns[0])
+		require.NotNil(t, anns[0].Anchor)
+		assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, Type: "+", Kind: "praise"}, withoutAnchor(anns[0]))
 		assert.True(t, m.annotatedFiles()["a.go"])
 		assert.Contains(t, m.layout.viewport.View(), "[praise]", "viewport is refreshed")
 	})
@@ -3629,7 +3639,7 @@ func TestModel_QuickPraise(t *testing.T) {
 		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'+'}})
 		anns := m.store.Get("a.go")
 		require.Len(t, anns, 1)
-		assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, EndLine: 4, Type: "+", Comment: "nice", Kind: "praise"}, anns[0])
+		assert.Equal(t, annotation.Annotation{File: "a.go", Line: 2, EndLine: 4, Type: "+", Comment: "nice", Kind: "praise"}, withoutAnchor(anns[0]))
 		after := m.renderDiff()
 		assert.Contains(t, after, "[praise] nice")
 		assert.NotContains(t, after, "[bug]", "cached rows must not keep the old kind")

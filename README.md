@@ -35,7 +35,7 @@ Built for a specific use case: reviewing code changes, plans, and documents with
 - Scratch-buffer review: annotate arbitrary piped or redirected text with `--stdin`, optionally naming it with `--stdin-name`. When the piped content sniffs as a git unified diff, revdiff parses it as a real multi-file diff (review `gh pr diff` or `git format-patch -1 --stdout` output directly); otherwise the input is shown as a single context-only buffer.
 - Pi package: launch revdiff from pi, capture annotations, and send them to the agent immediately for the normal review loop
 - Review history: auto-saves annotations and diffs to `~/.config/revdiff/history/` on quit as a safety net
-- Review sessions (git): reviewed marks are saved per branch and resumed on the next run; files whose change moved on since you marked them show `↻` (changed since review)
+- Review sessions (git): reviewed marks and annotations are saved per branch and resumed on the next run; files whose change moved on since you marked them show `↻` (changed since review), annotations whose line changed become outdated, and each round's output carries only annotations not yet sent to the agent
 - Fully customizable colors via environment variables, CLI flags, or config file
 - Custom keybindings: remap any key via config file, export defaults with `--dump-keys`
 
@@ -737,9 +737,13 @@ In the Claude Code and Codex plugins, you can also tell the agent to use a past 
 
 ### Review Sessions
 
-In git repositories revdiff keeps a review session per branch, so a review survives quitting. Every file you mark reviewed with `Space` is saved together with a fingerprint of its diff. The next time you open revdiff on the same branch, the latest session is resumed silently and the status bar briefly reports what it found, e.g. `Resumed session for feature · 14 reviewed · 3 changed since review`. Files whose change is identical stay reviewed (`✓`). Files that changed after you marked them — the agent edited them, or a rebase changed their content — show `↻` (changed since review) in the tree, count as unreviewed for `F`, and add `↻ N` to the status bar; look at them and mark them again with `Space`.
+In git repositories revdiff keeps a review session per branch — reviewed marks and annotations — so a review survives quitting and the next round with an agent starts where you left off. Every file you mark reviewed with `Space` is saved together with a fingerprint of its diff. The next time you open revdiff on the same branch, the latest session is resumed silently and the status bar briefly reports what it found, e.g. `Resumed session for feature · 14 reviewed · 3 changed since review`. Files whose change is identical stay reviewed (`✓`). Files that changed after you marked them — the agent edited them, or a rebase changed their content — show `↻` (changed since review) in the tree, count as unreviewed for `F`, and add `↻ N` to the status bar; look at them and mark them again with `Space`.
 
 A session belongs to a branch: working-tree, `--staged`, and single-ref reviews belong to the checked-out branch (a detached HEAD becomes `detached-<sha>`); a range `A..B` or `A...B` belongs to `B` (a remote-tracking `origin/B` counts as `B`); a branch or pull request picked with `b` belongs to that branch or to the pull request's head branch, and switching loads its session. A narrowed run (`--only`, `--include`, `--exclude`, untracked files hidden) only updates marks for the files it shows — marks for other files stay in the session.
+
+Annotations are part of the session too. Each one remembers the line it was written on (its text and two lines of context on each side), and when a session is resumed, on `R`, and when you switch back to a branch, revdiff looks for that line again. If the text is still there — even shifted or moved elsewhere in the file — the annotation follows it. If the line was edited or deleted, the annotation becomes **outdated**: it is shown dimmed with an `[outdated]` badge at its old line, or, when that line no longer exists, only in the `@` list (marked `gone`), and it is never sent again. A line whose text is ambiguous (several identical lines, or a lone brace) must also match some context to count as found. File-level annotations stay current while the file is in the diff and become outdated when it leaves. Press `x` (`resolve_annotation`) on an annotation to resolve it (dimmed `[resolved]`, never sent), or on a resolved or outdated one to reopen it at the line it is shown on.
+
+The output — stdout, `-o`, an `O` flush, the post-flush command, and the history file — carries only **pending** annotations: open ones that were not delivered yet. Writing the exit output or flushing with `O` marks them delivered (`[sent]`), so the next round sends only what you added or edited since; editing a delivered annotation makes it pending again. `Q` discards only the pending annotations (from the session too); delivered, outdated and resolved ones stay. With a session, `R` keeps annotations and re-anchors them, and `b` keeps each branch's annotations in that branch's session, so neither asks for confirmation. `--annotations FILE` replaces the session's annotations for that run, and the loaded annotations become part of the session. Without a session (`--no-session`, `--stdin`, compare mode, Mercurial, Jujutsu) annotations behave as before: `R` and `b` drop them after a confirmation and `O` re-flushes the full set.
 
 Press `Ctrl+N` (`new_session`) to start a fresh session for the current branch; when marks or annotations exist, revdiff asks for `y` first. Previous sessions stay on disk. From the command line, `--session=new` starts fresh, `--session=NAME` resumes or creates a named session (e.g. one per review round), and `--no-session` turns persistence off (also `REVDIFF_SESSION` / `REVDIFF_NO_SESSION`, or `session` / `no-session` in the config file).
 
@@ -788,6 +792,7 @@ The file picker lists paths currently visible in the sidebar, so annotated-only 
 | `}` / `{` | Jump to next/previous annotation (always crosses file boundaries; silent no-op at the first/last annotation) |
 | `d` | Delete annotation under cursor |
 | `+` | Praise current line (no comment needed; re-kinds an existing annotation as praise) |
+| `x` | Resolve the annotation under the cursor, or reopen a resolved or outdated one |
 | `O` | Export annotations without exiting (requires `--output` and/or `--post-flush-command`) |
 | `Tab` / `Shift+Tab` (during annotation input) | Cycle annotation kind: none → bug → suggestion → question → nitpick → praise |
 | `Ctrl+E` (during annotation input) | Open `$EDITOR` for multi-line annotation (`open_editor` — rebindable) |
@@ -842,10 +847,10 @@ Press `Space` to mark the focused file reviewed. Press `F` to toggle the sidebar
 | `F` | Toggle filter: all files / unreviewed only |
 | `?` | Toggle help overlay showing all keybindings |
 | `i` | Toggle info popup — review scope (mode, VCS, ref, filters, file/status counts, aggregate `+/-` stats) plus the commit log for the current ref range when applicable |
-| `R` | Reload diff from VCS (warns if annotations exist) |
-| `b` | Switch the review to a branch, an open pull request, or a typed ref (git only; warns if annotations exist) |
+| `R` | Reload diff from VCS (with a review session annotations are kept and re-anchored; otherwise warns before dropping them) |
+| `b` | Switch the review to a branch, an open pull request, or a typed ref (git only; loads that branch's review session) |
 | `q` | Quit, output annotations to stdout |
-| `Q` | Discard all annotations and quit (confirms if annotations exist) |
+| `Q` | Discard annotations not yet sent and quit (confirms if there are any) |
 
 **Sessions:**
 
@@ -865,7 +870,7 @@ Branches and pull requests use GitHub's three-dot comparison: only what changed 
 
 Type to filter by name, title, author, or branch. Any typed text can also be used as a ref directly — pick the `use "<text>"` row (it is the only row when nothing matches), e.g. `main...feature`, `HEAD~3`, or `v1.2..v1.3`; it is validated before the switch. Arrow keys or the mouse wheel move, `Enter` or left-click switches, the first `Esc` clears the filter and the second closes the switcher.
 
-Switching reloads the file list and commit log like `R`. Existing annotations refer to lines of the previous diff, so revdiff asks for `y` before dropping them (`--no-confirm-reload` skips the prompt). The info popup (`i`) names the selected branch or pull request and shows the full ref, the commit list follows the new range, and the history auto-save records the ref that was on screen at exit. Reviewed marks come from the target branch's review session (see [Review Sessions](#review-sessions)) and survive only for files whose change is identical in the new diff. The switcher is available for git diffs; it is not offered with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in Mercurial and Jujutsu repositories.
+Switching reloads the file list and commit log like `R`. With a review session the current branch's annotations stay in its session and the target branch's are loaded; without one, existing annotations refer to lines of the previous diff, so revdiff asks for `y` before dropping them (`--no-confirm-reload` skips the prompt). The info popup (`i`) names the selected branch or pull request and shows the full ref, the commit list follows the new range, and the history auto-save records the ref that was on screen at exit. Reviewed marks come from the target branch's review session (see [Review Sessions](#review-sessions)) and survive only for files whose change is identical in the new diff. The switcher is available for git diffs; it is not offered with `--stdin`, `--compare-old/--compare-new`, `--all-files`, standalone `--only` files, or in Mercurial and Jujutsu repositories.
 
 ### Status Bar Icons
 
@@ -975,7 +980,7 @@ When the leader is pressed, the status bar shows `Pending: ctrl+w, esc to cancel
 
 **Search:** `search`
 
-**Annotations:** `confirm` (annotate line / select file), `annotate_file`, `delete_annotation`, `annot_list`, `open_editor`, `next_annotation`, `prev_annotation`, `flush_output`, `quick_praise`
+**Annotations:** `confirm` (annotate line / select file), `annotate_file`, `delete_annotation`, `annot_list`, `open_editor`, `next_annotation`, `prev_annotation`, `flush_output`, `quick_praise`, `resolve_annotation`
 
 **View:** `toggle_collapsed`, `toggle_compact`, `toggle_wrap`, `toggle_tree`, `toggle_line_numbers`, `toggle_blame`, `toggle_word_diff`, `toggle_hunk`, `toggle_untracked`, `mark_reviewed`, `filter_unreviewed`, `theme_select`, `filter`, `info`, `reload`, `switch_ref`
 
@@ -1009,6 +1014,8 @@ When the preset is on, the digits `0`-`9` and the leader keys `g`, `z`, `Z` are 
 The help overlay (`?`) shows a dedicated **Vim motion** section listing all eleven preset bindings when `--vim-motion` is on; when off, the section is hidden.
 
 ### Output Format
+
+With a review session (see [Review Sessions](#review-sessions)) the output holds only annotations that were not delivered before: annotations already sent in an earlier exit output or `O` flush, outdated ones, and resolved ones are left out, so each round carries only what is new or edited. The record format is unchanged.
 
 ```
 ## handler.go (file-level)

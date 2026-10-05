@@ -24,12 +24,12 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 - `app/highlight/` - chroma syntax highlighting, foreground-only ANSI
 - `app/keymap/` - configurable keybindings (`Action` constants, parser, defaults, dump)
 - `app/theme/` - Catalog-centric theme system: `Theme` (data + serialization) and `Catalog` (discovery, loading, installation, gallery). Zero standalone functions — all logic as methods. Files: `theme.go` (Theme struct), `catalog.go` (Catalog struct + all operations). 7 bundled + community gallery
-- `app/annotation/` - in-memory annotation store and structured output
+- `app/annotation/` - in-memory annotation store and structured output; annotation status (open/outdated/resolved), delivery flag, and re-anchoring (`anchor.go`: `NewAnchor`, `ReanchorFile`). `FormatOutput` emits only pending (open, undelivered) annotations
 - `app/editor/` - external `$EDITOR` invocation for multi-line annotations: temp-file lifecycle, editor resolution ($EDITOR → $VISUAL → vi), and `Command()` API returning `*exec.Cmd` + completion func for `tea.ExecProcess`. Consumed by `app/ui` via the `ExternalEditor` interface
 - `app/handoff/` - prepares user-configured post-flush shell commands. Annotation snapshots are provided on stdin; stdout is suppressed so helpers cannot overwrite the TUI. Consumed by `app/ui` via the `PostFlushHook` interface and `tea.ExecProcess`
 - `app/refsource/` - git/gh processes behind the runtime review switcher (`b`): local branches and open GitHub PRs, resolved to GitHub-style three-dot refs (PRs fetched into `FETCH_HEAD` only). Consumed by `app/ui` via the `RefSource` interface, wired for git diffs only
 - `app/history/` - review session auto-save to `~/.config/revdiff/history/`
-- `app/session/` - per-branch review sessions under `~/.config/revdiff/sessions/<repo>-<hash>/<branch>/<id>.json` (reviewed marks with fingerprints): repo identity (origin URL / git common dir hash), branch-key resolution, atomic save. Consumed by `app/ui` via the `SessionStore` interface, wired for git diffs only
+- `app/session/` - per-branch review sessions under `~/.config/revdiff/sessions/<repo>-<hash>/<branch>/<id>.json` (reviewed marks with fingerprints, annotations with anchors): repo identity (origin URL / git common dir hash), branch-key resolution, atomic save. Consumed by `app/ui` via the `SessionStore` interface, wired for git diffs only
 - `app/fsutil/` - filesystem utilities
 - `app/ui/mocks/` - moq-generated mocks (never edit manually)
 

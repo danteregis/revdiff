@@ -172,8 +172,11 @@ across files by concern to keep files under ~500 lines:
   `switchRef`, which re-points `cfg.ref` and reloads through `triggerReload`
 - **`session.go`** — review-session persistence: consumer-side `SessionStore` interface,
   `openSession` (startup, ref switch, new session) seeding the tree's reviewed marks for the
-  regular fingerprint pipeline to validate, `saveSession` merging marks for the paths of the current
-  file list only, the resume status note, and the `new_session` action with its confirmation
+  regular fingerprint pipeline to validate and loading the session's annotations into the store,
+  `saveSession` merging marks for the paths of the current file list only (annotations are saved
+  whole), `reanchorAnnotations` (inside `loadFiles`, same 4-worker pool) + `applyReanchored`
+  (in `handleFilesLoaded`, skipping files edited while the load ran), delivery (`MarkDelivered`)
+  and `Q`'s pending-only discard, the resume status note, and the `new_session` action
 - **`search.go`** — search input handling, match computation, navigation
 - **`mouse.go`** — mouse event routing: `handleMouse` dispatch, `hitTest` pane classification
   (`hitZone`), wheel/left-click helpers (`clickTree`, `clickDiff`), layout helpers
@@ -373,7 +376,22 @@ key to struct field mapping.
 
 ### app/annotation/ — annotation store
 
-In-memory store for annotations. Each `Annotation` has file, line, text, optional `EndLine` for
+In-memory store for annotations. Besides its content an `Annotation` carries a review `Status`
+(open — the zero value —, `outdated`, `resolved`), a `Delivered` flag (handed to the agent and not
+edited since) and an `Anchor` (`anchor.go`): the annotated line's text plus up to two non-divider
+neighbors on each side. `ReanchorFile(anns, lines)` finds each anchored line again in a file's
+current diff: same change type and text, best context match, then nearest to the old line number; a
+match that relies on no context is refused when the text is ambiguous (several candidates) or trivial
+(a brace or blank line). A found annotation moves there (its `EndLine` shifts with it) and an outdated
+one reopens; a lost one becomes outdated (resolved stays resolved) and keeps its line when that line
+still exists and no current annotation took it, otherwise it is detached to a negative line number
+(rendered nowhere, listed in `@`). Annotations without an anchor get one captured at their current
+line. `Add` replaces an existing annotation as a whole, so an edit reopens and re-sends it.
+`FormatOutput` emits only `Pending()` annotations (open and not delivered); `PendingCount`,
+`PendingFiles`, `MarkDelivered` and `DiscardPending` serve the output, history and `Q` paths. Without
+a review session nothing is ever marked delivered, so output behaves as before.
+
+Each `Annotation` also has file, line, text, optional `EndLine` for
 hunk range headers (triggered when comment contains "hunk" keyword), and an optional `Kind` — one of
 the Conventional Comments labels listed once in `kind.go` (`bug`, `suggestion`, `question`,
 `nitpick`, `praise`). A typed annotation may have an empty comment. Structured output formatting
@@ -462,6 +480,8 @@ through `ui.SessionStore` (`Open`, `Save`):
   create), or the branch's most recently updated one; a new session when none exists. `Opened`
   reports `Resumed` and `FingerprintMismatch` (the stored `fingerprint_version` differs from
   `diff.FileFingerprintVersion`, so marks cannot be verified).
+- **Annotations** — the session stores the whole annotation store (open, outdated, resolved,
+  delivered) with anchors; the UI re-anchors them on every file-list load.
 - **Save** — atomic (`fsutil.AtomicWriteFile`, 0600); stamps schema/fingerprint versions, repo id
   and update time, and re-resolves the head commit when the UI cleared it on reload. A session that
   has no state and was never written is skipped.
@@ -627,8 +647,11 @@ User presses '+' on diff line (quick_praise)
       → optional store.WriteFile(path) → atomic file snapshot
       → optional PostFlushHook.Prepare(snapshot) → tea.ExecProcess → command reads snapshot from stdin
       → revdiff stays open (annotate → flush → hand off → 'R' reload loop)
-  → on quit: store.FormatOutput() → structured output to stdout/file (file branch uses store.WriteFile)
-  → (optional) history.Save() → markdown to ~/.config/revdiff/history/ (best-effort warnings only)
+  → 'x' (resolve_annotation): open → resolved; resolved/outdated → open + undelivered, re-anchored
+  → every add/edit/delete/resolve saves the review session (when one is active)
+  → on quit: store.FormatOutput() (pending annotations only) → structured output to stdout/file
+    (file branch uses store.WriteFile); on success Model.MarkDelivered() marks them delivered
+  → (optional) history.Save() → markdown to ~/.config/revdiff/history/ (same pending set; best-effort)
   → if --exit-code-on-annotations is enabled and output is non-empty: exit 10
 ```
 

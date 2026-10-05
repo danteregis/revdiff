@@ -115,7 +115,7 @@ Behavior:
 - If revdiff exits without captured annotations, report that no annotations were captured and stop.
 - When recent agent work created new untracked files, include `--untracked` so those files appear in the review tree.
 - Include `--filter-unreviewed` only when the user asks for the tree limited to files not marked reviewed; `F` toggles the same filter during the review.
-- In git repositories revdiff resumes the branch's review session silently (reviewed marks persist across runs). Do not pass `--session` or `--no-session` unless the user asks to start over (`--session=new`), names a session, or asks not to persist the review.
+- In git repositories revdiff resumes the branch's review session silently (reviewed marks and annotations persist across runs). A review returns only annotations not delivered before — earlier rounds' comments, outdated and resolved ones are not repeated — so treat each result as the next increment. Do not pass `--session` or `--no-session` unless the user asks to start over (`--session=new`), names a session, or asks not to persist the review.
 - When launching after analysis or refactor work, include `--description` or `--description-file` so the info popup explains the review context.
 
 ## Existing review history

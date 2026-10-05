@@ -330,7 +330,7 @@ func (m *Model) requestRefSwitch(t reviewTarget) tea.Cmd {
 		m.refs.hint = "Already reviewing " + m.targetLabel(t)
 		return nil
 	}
-	if m.store.Count() > 0 && !m.cfg.noStatusBar && !m.cfg.noConfirmReload {
+	if m.store.Count() > 0 && !m.sessionsActive() && !m.cfg.noStatusBar && !m.cfg.noConfirmReload {
 		m.refs.pending = &t
 		m.refs.hint = fmt.Sprintf("Annotations will be dropped — press y to switch to %s, any other key to cancel", m.targetLabel(t))
 		return nil

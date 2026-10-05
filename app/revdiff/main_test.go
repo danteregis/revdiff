@@ -110,6 +110,7 @@ func TestFinalize(t *testing.T) {
 			}
 
 			var buf bytes.Buffer
+			delivered := 0
 			code, err := finalize(finalizeReq{
 				opts:        opts,
 				annotations: tt.output,
@@ -119,10 +120,12 @@ func TestFinalize(t *testing.T) {
 				workDir:     "repo",
 				signaled:    tt.signaled,
 				stdout:      &buf,
+				delivered:   func() { delivered++ },
 			})
 			require.NoError(t, err)
 			assert.Equal(t, 0, code)
 			assert.Equal(t, tt.wantHistory, historyFileCount(t, histDir) > 0)
+			assert.Equal(t, tt.wantHandoff, delivered == 1, "annotations are marked delivered exactly when handed off")
 
 			if tt.withOutputFile {
 				assert.Empty(t, buf.String())
@@ -142,6 +145,19 @@ func TestFinalize(t *testing.T) {
 			assert.Empty(t, buf.String())
 		})
 	}
+}
+
+func TestFinalize_FailedOutputIsNotDelivered(t *testing.T) {
+	delivered := false
+	_, err := finalize(finalizeReq{
+		opts:        options{HistoryDir: t.TempDir(), Output: filepath.Join(t.TempDir(), "missing", "out.md")},
+		annotations: "## file.go:1 (+)\ncomment\n",
+		workDir:     "repo",
+		stdout:      &bytes.Buffer{},
+		delivered:   func() { delivered = true },
+	})
+	require.Error(t, err)
+	assert.False(t, delivered)
 }
 
 func TestFinalize_HistoryRecordsReviewedRef(t *testing.T) {

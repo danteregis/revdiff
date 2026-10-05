@@ -90,9 +90,12 @@ func (a *annotListOverlay) maxVisible(height int) int {
 
 func (a *annotListOverlay) formatItem(item AnnotationItem, width int, selected bool, resolver Resolver) string {
 	var prefix string
-	if item.Line == 0 {
+	switch {
+	case item.Line == 0:
 		prefix = filepath.Base(item.File) + " (file-level)"
-	} else {
+	case item.Line < 0:
+		prefix = fmt.Sprintf("%s:%d (%s, gone)", filepath.Base(item.File), item.WasLine, item.ChangeType)
+	default:
 		prefix = fmt.Sprintf("%s:%d (%s)", filepath.Base(item.File), item.Line, item.ChangeType)
 	}
 
@@ -102,6 +105,9 @@ func (a *annotListOverlay) formatItem(item AnnotationItem, width int, selected b
 	text := item.Comment
 	if item.Kind != "" {
 		text = strings.TrimSuffix("["+item.Kind+"] "+text, " ")
+	}
+	if item.Status != "" {
+		text = strings.TrimSuffix("["+item.Status+"] "+text, " ")
 	}
 
 	var comment string

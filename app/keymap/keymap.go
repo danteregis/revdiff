@@ -78,6 +78,7 @@ const (
 	ActionFlushOutput            Action = "flush_output"
 	ActionQuickPraise            Action = "quick_praise"
 	ActionNewSession             Action = "new_session"
+	ActionResolveAnnotation      Action = "resolve_annotation"
 )
 
 // SectionPane is the help section name for pane-related keybindings.
@@ -102,14 +103,15 @@ var validActions = map[Action]bool{
 	ActionToggleLineNums: true, ActionToggleBlame: true, ActionToggleWordDiff: true, ActionToggleHunk: true,
 	ActionMarkReviewed: true, ActionFilterUnreviewed: true, ActionFilter: true, ActionToggleUntracked: true,
 	ActionQuit: true, ActionDiscardQuit: true, ActionHelp: true, ActionDismiss: true, ActionThemeSelect: true,
-	ActionInfo:             true,
-	ActionReload:           true,
-	ActionSwitchRef:        true,
-	ActionOpenEditor:       true,
-	ActionOpenFileInEditor: true,
-	ActionFlushOutput:      true,
-	ActionQuickPraise:      true,
-	ActionNewSession:       true,
+	ActionInfo:              true,
+	ActionReload:            true,
+	ActionSwitchRef:         true,
+	ActionOpenEditor:        true,
+	ActionOpenFileInEditor:  true,
+	ActionFlushOutput:       true,
+	ActionQuickPraise:       true,
+	ActionNewSession:        true,
+	ActionResolveAnnotation: true,
 }
 
 // deprecatedActionAliases maps obsolete action names parsed from user
@@ -244,6 +246,7 @@ func defaultDescriptions() []HelpEntry {
 		{ActionPrevAnnotation, "previous annotation (across files)", "Annotations"},
 		{ActionFlushOutput, "flush annotations to output file", "Annotations"},
 		{ActionQuickPraise, "praise line (no comment needed)", "Annotations"},
+		{ActionResolveAnnotation, "resolve / reopen annotation", "Annotations"},
 
 		// view toggles
 		{ActionToggleCollapsed, "toggle collapsed view", "View"},
@@ -312,6 +315,7 @@ func defaultBindings() map[string]Action {
 		"{":      ActionPrevAnnotation,
 		"O":      ActionFlushOutput,
 		"+":      ActionQuickPraise,
+		"x":      ActionResolveAnnotation,
 		"v":      ActionToggleCollapsed,
 		"C":      ActionToggleCompact,
 		"w":      ActionToggleWrap,

@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
 	"github.com/umputun/revdiff/app/keymap"
 	"github.com/umputun/revdiff/app/ui/overlay"
@@ -174,7 +175,7 @@ func (m Model) statusBarText() string {
 	}
 
 	if m.inConfirmDiscard {
-		return fmt.Sprintf("discard %d annotations? [y/n]", m.store.Count())
+		return fmt.Sprintf("discard %d annotations? [y/n]", m.store.PendingCount())
 	}
 
 	if m.annot.annotating {
@@ -225,6 +226,9 @@ func (m Model) statusBarText() string {
 			suffix = "annotation"
 		}
 		rightParts = append(rightParts, fmt.Sprintf("%d %s", cnt, suffix))
+		if outdated := m.annotationCount(annotation.StatusOutdated); outdated > 0 {
+			rightParts = append(rightParts, fmt.Sprintf("%d outdated", outdated))
+		}
 	}
 	rightParts = append(rightParts, m.statusModeIcons(), "? help")
 

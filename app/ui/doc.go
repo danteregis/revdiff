@@ -29,7 +29,8 @@
 //     list loading, selection resolution (fetch, validation), annotation-drop confirmation,
 //     and the ref switch that reloads through triggerReload
 //   - session.go — review sessions: [SessionStore] interface, opening a branch's session (seeding
-//     reviewed marks for fingerprint validation), merge-saving marks, new_session
+//     reviewed marks for fingerprint validation, loading annotations), merge-saving marks, annotation
+//     re-anchoring on file-list loads, delivery marking, new_session
 //   - search.go — incremental search: input handling, match computation, navigation
 //
 // Model mutable state is organized into explicit sub-structs by concern:

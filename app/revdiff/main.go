@@ -240,6 +240,7 @@ func run(opts options) (int, error) {
 		Sessions:             sessions,
 		SessionName:          sessionName,
 		NewSession:           freshSession,
+		PreloadedAnnotations: opts.Annotations != "",
 		CommitLog:            commitLogger,
 		CommitsApplicable:    commitsApplicable(opts, commitLogger),
 		ReloadApplicable:     reloadApplicable(opts),
@@ -320,12 +321,13 @@ func run(opts options) (int, error) {
 			ref:         ref,
 			staged:      staged,
 			annotations: m.Store().FormatOutput(),
-			files:       m.Store().Files(),
+			files:       m.Store().PendingFiles(),
 			discarded:   m.Discarded(),
 			gitRoot:     gitRoot,
 			workDir:     workDir,
 			signaled:    signaled,
 			stdout:      os.Stdout,
+			delivered:   m.MarkDelivered,
 		})
 	}
 	if runErr != nil {
@@ -364,12 +366,16 @@ type finalizeReq struct {
 	workDir     string
 	signaled    bool
 	stdout      io.Writer
+	delivered   func() // marks the output annotations delivered in the review session; nil when not tracked
 }
 
-// finalize persists the review after p.Run() joins. A discarded review or one
-// with no annotations writes nothing. Otherwise the history safety-net save
-// always runs; a signal-driven exit (r.signaled) stops there — history only,
-// never the -o handoff — while a graceful exit also writes the annotation output.
+// finalize persists the review after p.Run() joins. annotations holds only the
+// pending annotations (open and not yet delivered), so history and output carry
+// exactly what this run hands to the agent. A discarded review or one with
+// nothing pending writes nothing. Otherwise the history safety-net save always
+// runs; a signal-driven exit (r.signaled) stops there — history only, never the
+// -o handoff, and nothing is marked delivered — while a graceful exit also
+// writes the annotation output and, once that succeeds, marks it delivered.
 func finalize(r finalizeReq) (int, error) {
 	if r.discarded || r.annotations == "" {
 		return 0, nil
@@ -378,7 +384,11 @@ func finalize(r finalizeReq) (int, error) {
 	if r.signaled {
 		return 0, nil
 	}
-	return writeAnnotationOutput(annotationOutputReq{opts: r.opts, output: r.annotations, stdout: r.stdout})
+	code, err := writeAnnotationOutput(annotationOutputReq{opts: r.opts, output: r.annotations, stdout: r.stdout})
+	if err == nil && r.delivered != nil {
+		r.delivered()
+	}
+	return code, err
 }
 
 type annotationOutputReq struct {
