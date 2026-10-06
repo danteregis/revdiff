@@ -631,6 +631,19 @@ func TestStore_PendingOutput(t *testing.T) {
 	assert.Equal(t, 4, s.Count(), "delivery keeps annotations")
 }
 
+func TestStore_FormatOpen(t *testing.T) {
+	s := NewStore()
+	assert.Empty(t, s.FormatOpen())
+	s.Add(Annotation{File: "a.go", Line: 1, Type: "+", Comment: "new"})
+	s.Add(Annotation{File: "a.go", Line: 2, Type: "+", Comment: "sent", Delivered: true, Kind: "bug"})
+	s.Add(Annotation{File: "b.go", Line: 3, Type: "+", Comment: "stale", Status: StatusOutdated})
+	s.Add(Annotation{File: "c.go", Line: 4, Type: "+", Comment: "done", Status: StatusResolved, Delivered: true})
+
+	assert.Equal(t, "## a.go:1 (+)\nnew\n\n## a.go:2 (+)\nbug: sent\n", s.FormatOpen(),
+		"delivered open annotations are included, outdated and resolved never")
+	assert.Equal(t, "## a.go:1 (+)\nnew\n", s.FormatOutput(), "FormatOutput stays pending-only")
+}
+
 func TestStore_DiscardPending(t *testing.T) {
 	s := NewStore()
 	s.Add(Annotation{File: "a.go", Line: 1, Type: "+", Comment: "new"})

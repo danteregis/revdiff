@@ -57,6 +57,7 @@ type options struct {
 	HistoryDir            string   `long:"history-dir" ini-name:"history-dir" env:"REVDIFF_HISTORY_DIR" description:"directory for review history auto-saves"`
 	Session               string   `long:"session" ini-name:"session" env:"REVDIFF_SESSION" description:"review session to resume by name, or new for a fresh one"`
 	NoSession             bool     `long:"no-session" ini-name:"no-session" env:"REVDIFF_NO_SESSION" description:"disable review session persistence"`
+	PrintAnnotations      string   `long:"print-annotations" optional:"yes" optional-value:"pending" choice:"pending" choice:"all" no-ini:"true" description:"print review-session annotations and exit"`
 	Output                string   `long:"output" short:"o" env:"REVDIFF_OUTPUT" no-ini:"true" description:"write annotations to file instead of stdout"`
 	PostFlushCommand      string   `long:"post-flush-command" ini-name:"post-flush-command" env:"REVDIFF_POST_FLUSH_COMMAND" description:"run command after a successful O flush"`
 	Keys                  string   `long:"keys" env:"REVDIFF_KEYS" no-ini:"true" description:"path to keybindings file"`
@@ -192,7 +193,7 @@ func parseArgs(args []string) (options, error) {
 	}
 	opts.PostFlushCommand = strings.TrimSpace(opts.PostFlushCommand)
 
-	if err := validateStdinFlags(opts); err != nil {
+	if err := validateModeFlags(opts); err != nil {
 		return options{}, err
 	}
 
@@ -204,6 +205,15 @@ func parseArgs(args []string) (options, error) {
 	opts.compareAbsNew = absNew
 
 	return opts, nil
+}
+
+// validateModeFlags rejects flag combinations that the --stdin and
+// --print-annotations modes cannot honor.
+func validateModeFlags(opts options) error {
+	if err := validateStdinFlags(opts); err != nil {
+		return err
+	}
+	return validatePrintAnnotationsFlag(opts)
 }
 
 // dumpConfig writes the current config with defaults to the given writer.

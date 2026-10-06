@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/umputun/revdiff/app/annotation"
 	"github.com/umputun/revdiff/app/diff"
@@ -18,25 +17,15 @@ import (
 const maxAnnotationsFileSize = 1 << 20
 
 // preloader bundles the inputs and warning sink for --annotations preload.
-// All helpers are methods so call-sites stay free of the wide parameter
-// lists earlier shapes accumulated.
+// The file set and per-file diffs come from the shared diffSnapshot.
 type preloader struct {
-	store              *annotation.Store
-	renderer           ui.Renderer
-	ref                string
-	staged             bool
-	untrackedFn        func() ([]string, error)
-	untrackedRenamesFn func([]string) ([]diff.FileEntry, error)
-	workDir            string
-	warnOut            io.Writer
+	store   *annotation.Store
+	snap    *diffSnapshot
+	warnOut io.Writer
 
 	// lineCache memoises the (line, change-type) set per file so
 	// repeated annotations on the same file do not re-fetch its diff.
 	lineCache map[string]map[lineKey]struct{}
-
-	// renames maps a file's current path to its rename origin so the
-	// per-file diff is rename-aware (matches the displayed minimal diff).
-	renames map[string]string
 }
 
 type lineKey struct {
@@ -63,16 +52,19 @@ func preloadAnnotations(path string, store *annotation.Store, renderer ui.Render
 	}
 
 	p := &preloader{
-		store:              store,
-		renderer:           renderer,
-		ref:                ref,
-		staged:             staged,
-		untrackedFn:        untrackedFn,
-		untrackedRenamesFn: untrackedRenamesFn,
-		workDir:            workDir,
-		warnOut:            warnOut,
-		lineCache:          make(map[string]map[lineKey]struct{}),
-		renames:            make(map[string]string),
+		store: store,
+		snap: &diffSnapshot{
+			renderer:           renderer,
+			ref:                ref,
+			staged:             staged,
+			untrackedFn:        untrackedFn,
+			untrackedRenamesFn: untrackedRenamesFn,
+			workDir:            workDir,
+			warnOut:            warnOut,
+			warnPrefix:         "--annotations",
+		},
+		warnOut:   warnOut,
+		lineCache: make(map[string]map[lineKey]struct{}),
 	}
 	return p.load(records)
 }
@@ -107,9 +99,9 @@ func readAnnotationsFile(path string) ([]annotation.Annotation, error) {
 }
 
 func (p *preloader) load(records []annotation.Annotation) error {
-	known, err := p.resolveKnownFiles()
+	known, err := p.snap.knownFiles()
 	if err != nil {
-		return err
+		return fmt.Errorf("annotation preload: %w", err)
 	}
 
 	for _, a := range records {
@@ -139,114 +131,15 @@ func (p *preloader) load(records []annotation.Annotation) error {
 	return nil
 }
 
-// resolveKnownFiles returns the set of paths the preload should accept.
-// Mirrors ui.loadFiles' assembly of the visible file set with one deliberate
-// divergence: untracked files are always folded in here, whereas the UI only
-// surfaces them when its show-untracked toggle is on. The preload is
-// upstream of the toggle, so it has to accept either viewing mode for the
-// round-trip to be lossless.
-//
-// When running with no ref and no --staged, staged-only FileAdded entries
-// are folded in if the unstaged set is empty (matches the UI's empty-diff
-// fallback). Files renamed since the annotations file was generated are
-// keyed under their old path and will orphan-drop here — a known limitation
-// of the path-based format.
-func (p *preloader) resolveKnownFiles() (map[string]diff.FileStatus, error) {
-	files, err := p.renderer.ChangedFiles(p.ref, p.staged)
-	if err != nil {
-		return nil, fmt.Errorf("resolve diff for annotation preload: %w", err)
-	}
-	known := make(map[string]diff.FileStatus, len(files))
-	for _, fe := range files {
-		known[fe.Path] = fe.Status
-		if fe.OldPath != "" {
-			p.renames[fe.Path] = fe.OldPath
-		}
-	}
-	if p.untrackedFn != nil {
-		if ut, utErr := p.untrackedFn(); utErr != nil {
-			p.warnf("warning: --annotations: list untracked files: %v\n", utErr)
-		} else {
-			for _, path := range ut {
-				if _, ok := known[path]; !ok {
-					known[path] = diff.FileUntracked
-				}
-			}
-			p.foldUntrackedRenames(ut, known)
-		}
-	}
-	if p.ref != "" || p.staged || len(files) > 0 {
-		return known, nil
-	}
-	stagedFiles, sErr := p.renderer.ChangedFiles("", true)
-	if sErr != nil {
-		p.warnf("warning: --annotations: resolve staged files: %v\n", sErr)
-		return known, nil
-	}
-	for _, fe := range stagedFiles {
-		if _, ok := known[fe.Path]; ok {
-			continue
-		}
-		if fe.Status == diff.FileAdded {
-			known[fe.Path] = fe.Status
-		}
-	}
-	return known, nil
-}
-
-// foldUntrackedRenames upgrades untracked files that are actually working-tree
-// renames (plain `mv old new`, new still untracked) to FileRenamed, records the
-// rename origin in p.renames, and drops the standalone deletion of the origin.
-// This mirrors ui.detectUntrackedRenames + mergeUntrackedEntries so the preload's
-// per-file diff matches the displayed rename-aware diff and annotations on removed
-// or context lines round-trip. No-op unless a git detector is wired and the review
-// is in unstaged working-tree mode (the only mode where new stays untracked).
-func (p *preloader) foldUntrackedRenames(untracked []string, known map[string]diff.FileStatus) {
-	if p.untrackedRenamesFn == nil || p.ref != "" || p.staged {
-		return
-	}
-	renames, err := p.untrackedRenamesFn(untracked)
-	if err != nil {
-		p.warnf("warning: --annotations: detect untracked renames: %v\n", err)
-		return
-	}
-	for _, r := range renames {
-		known[r.Path] = diff.FileRenamed
-		p.renames[r.Path] = r.OldPath
-		delete(known, r.OldPath)
-	}
-}
-
-// lookupLineSet returns the cached line-set for file, fetching FileDiff on
-// miss. Mirrors ui.resolveEmptyDiff: staged-only FileAdded entries retry with
-// --cached when the request was unstaged, and FileUntracked entries are read
-// from disk as all-added lines. Renamed files carry OldPath so the diff is
-// rename-aware and its line keys match the displayed minimal diff.
+// lookupLineSet returns the cached line-set for file, fetching its diff
+// through the snapshot on miss.
 func (p *preloader) lookupLineSet(file string, status diff.FileStatus) map[lineKey]struct{} {
 	if lines, ok := p.lineCache[file]; ok {
 		return lines
 	}
-	var (
-		dl   []diff.DiffLine
-		err  error
-		used string
-	)
-	switch {
-	case status == diff.FileUntracked && p.workDir != "":
-		used = "read"
-		dl, err = diff.ReadFileAsAdded(filepath.Join(p.workDir, file))
-	default:
-		used = "diff"
-		fileStaged := p.staged
-		if !p.staged && p.ref == "" && status == diff.FileAdded {
-			fileStaged = true
-		}
-		dl, err = p.renderer.FileDiff(diff.FileDiffRequest{Ref: p.ref, Path: file, OldPath: p.renames[file], Staged: fileStaged})
-	}
-	var lines map[lineKey]struct{}
-	if err != nil {
-		p.warnf("warning: --annotations: %s diff for %q: %v\n", used, file, err)
-		lines = map[lineKey]struct{}{}
+	lines := map[lineKey]struct{}{}
+	if dl, err := p.snap.fileLines(file, status); err != nil {
+		p.warnf("warning: --annotations: %v\n", err)
 	} else {
 		lines = buildLineSet(dl)
 	}

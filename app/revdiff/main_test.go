@@ -88,13 +88,20 @@ func TestFinalize(t *testing.T) {
 		discarded      bool
 		signaled       bool
 		withOutputFile bool
+		stdoutTTY      bool
 		wantHistory    bool
 		wantHandoff    bool
+		wantDelivered  bool
 	}{
 		{name: "signaled saves history only", output: output, signaled: true, wantHistory: true, wantHandoff: false},
 		{name: "signaled with output file writes no handoff", output: output, signaled: true, withOutputFile: true, wantHistory: true, wantHandoff: false},
-		{name: "graceful with output file", output: output, withOutputFile: true, wantHistory: true, wantHandoff: true},
-		{name: "graceful to stdout", output: output, wantHistory: true, wantHandoff: true},
+		{name: "graceful with output file", output: output, withOutputFile: true, wantHistory: true, wantHandoff: true, wantDelivered: true},
+		{name: "graceful with output file and terminal stdout", output: output, withOutputFile: true, stdoutTTY: true,
+			wantHistory: true, wantHandoff: true, wantDelivered: true},
+		{name: "graceful to redirected stdout", output: output, wantHistory: true, wantHandoff: true, wantDelivered: true},
+		{name: "graceful to terminal stdout prints but stays pending", output: output, stdoutTTY: true,
+			wantHistory: true, wantHandoff: true, wantDelivered: false},
+		{name: "signaled with terminal stdout writes nothing", output: output, signaled: true, stdoutTTY: true, wantHistory: true},
 		{name: "discarded writes nothing", output: output, discarded: true, wantHistory: false, wantHandoff: false},
 		{name: "discarded during signal still writes nothing", output: output, discarded: true, signaled: true, wantHistory: false, wantHandoff: false},
 		{name: "empty output writes nothing", output: "", wantHistory: false, wantHandoff: false},
@@ -120,12 +127,13 @@ func TestFinalize(t *testing.T) {
 				workDir:     "repo",
 				signaled:    tt.signaled,
 				stdout:      &buf,
+				stdoutTTY:   tt.stdoutTTY,
 				delivered:   func() { delivered++ },
 			})
 			require.NoError(t, err)
 			assert.Equal(t, 0, code)
 			assert.Equal(t, tt.wantHistory, historyFileCount(t, histDir) > 0)
-			assert.Equal(t, tt.wantHandoff, delivered == 1, "annotations are marked delivered exactly when handed off")
+			assert.Equal(t, tt.wantDelivered, delivered == 1, "annotations are marked delivered exactly when handed off")
 
 			if tt.withOutputFile {
 				assert.Empty(t, buf.String())

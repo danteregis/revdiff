@@ -20,6 +20,7 @@ import (
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
+	"github.com/umputun/revdiff/app/session"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
 	"github.com/umputun/revdiff/app/ui/overlay"
@@ -64,6 +65,15 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(0)
+	}
+
+	if opts.PrintAnnotations != "" {
+		code, err := printAnnotations(opts, session.DefaultRoot(), os.Stdout, os.Stderr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(code)
 	}
 
 	themesDir := defaultThemesDir()
@@ -327,6 +337,7 @@ func run(opts options) (int, error) {
 			workDir:     workDir,
 			signaled:    signaled,
 			stdout:      os.Stdout,
+			stdoutTTY:   term.IsTerminal(os.Stdout.Fd()),
 			delivered:   m.MarkDelivered,
 		})
 	}
@@ -366,6 +377,7 @@ type finalizeReq struct {
 	workDir     string
 	signaled    bool
 	stdout      io.Writer
+	stdoutTTY   bool   // stdout is a terminal: printing there hands nothing to an agent
 	delivered   func() // marks the output annotations delivered in the review session; nil when not tracked
 }
 
@@ -376,6 +388,10 @@ type finalizeReq struct {
 // runs; a signal-driven exit (r.signaled) stops there — history only, never the
 // -o handoff, and nothing is marked delivered — while a graceful exit also
 // writes the annotation output and, once that succeeds, marks it delivered.
+// Output printed to a terminal (no -o, stdout a TTY) is not a handoff: nothing
+// captured it, so the annotations stay pending for the next exit or
+// --print-annotations. A redirected or piped stdout (an agent capturing it) and
+// -o are handoffs.
 func finalize(r finalizeReq) (int, error) {
 	if r.discarded || r.annotations == "" {
 		return 0, nil
@@ -385,7 +401,8 @@ func finalize(r finalizeReq) (int, error) {
 		return 0, nil
 	}
 	code, err := writeAnnotationOutput(annotationOutputReq{opts: r.opts, output: r.annotations, stdout: r.stdout})
-	if err == nil && r.delivered != nil {
+	handedOff := r.opts.Output != "" || !r.stdoutTTY
+	if err == nil && handedOff && r.delivered != nil {
 		r.delivered()
 	}
 	return code, err

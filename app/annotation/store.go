@@ -261,18 +261,24 @@ func (s *Store) Load(r io.Reader) error {
 // start of the body ("kind: text", or the bare "kind" for an empty comment);
 // the record header grammar is unchanged and untyped bodies are emitted as-is.
 func (s *Store) FormatOutput() string {
-	if s.PendingCount() == 0 {
-		return ""
-	}
+	return s.format(Annotation.Pending)
+}
 
-	files := s.Files()
+// FormatOpen is FormatOutput for every open annotation, delivered or not:
+// outdated and resolved annotations are still never emitted. It backs
+// re-sending a whole review (--print-annotations=all).
+func (s *Store) FormatOpen() string {
+	return s.format(func(a Annotation) bool { return a.Status == StatusOpen })
+}
 
+// format emits the annotations include accepts in the FormatOutput format.
+func (s *Store) format(include func(Annotation) bool) string {
 	var buf strings.Builder
 	first := true
-	for _, file := range files {
+	for _, file := range s.Files() {
 		anns := s.Get(file) // sorted by line: file-level (0) first, then ascending
 		for _, a := range anns {
-			if !a.Pending() {
+			if !include(a) {
 				continue
 			}
 			if !first {
