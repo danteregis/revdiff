@@ -13,6 +13,7 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 │    renderer_setup.go — VCS detection, renderer pick │
 │    themes.go        — theme CLI commands, wiring    │
 │    history_save.go  — history-save policy           │
+│    print_annotations.go — --print-annotations       │
 ├─────────────────────────────────────────────────────┤
 │  app/ui/ — bubbletea TUI (single Model struct)      │
 │    ├── overlay/   — popup layers (help, annots,     │
@@ -41,8 +42,23 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 
 `package main` is the composition root, split across files by concern:
 
-- **`main.go`** — `main()`, early-exit commands (version, dump-config, dump-keys), `run()`
-  orchestration, `finalize()` (history safety-net vs `-o` handoff after `p.Run()`)
+- **`main.go`** — `main()`, early-exit commands (version, dump-config, dump-keys,
+  print-annotations), `run()` orchestration, `finalize()` (history safety-net vs `-o` handoff after
+  `p.Run()`). The exit output marks annotations delivered only when it is a handoff: `-o`, or a
+  stdout that is not a terminal (`finalizeReq.stdoutTTY`, computed in `run()` with
+  `term.IsTerminal`). Printed to a terminal, nothing captured it, so the annotations stay pending
+- **`print_annotations.go`** — `--print-annotations[=pending|all]`: prints a review session's
+  annotations without the TUI. Opens the session a launch with the same refs and `--session` would
+  (through the local `printSessionStore` interface), re-anchors it against the current diff with
+  `annotation.ReanchorFile` (files no longer in the diff become outdated, as in
+  `ui.applyReanchored`), writes `FormatOutput` (pending) or `FormatOpen` (every open annotation)
+  through `writeAnnotationOutput` (stdout or `-o`, same exit code), then marks the printed pending
+  annotations delivered and saves the session — only after the write succeeded. Ignores
+  `--include`/`--exclude` (the session covers the whole branch)
+- **`diffsnapshot.go`** — `diffSnapshot`: the review's file set (changed + untracked + untracked
+  renames + the staged-only fallback) and full-context per-file diffs without the TUI, mirroring
+  `ui.loadFiles` / `fetchEffectiveFileDiff`; shared by the `--annotations` preload
+  (`annotations_load.go`) and `--print-annotations`
 - **`config.go`** — `options` struct, `parseArgs`, `dumpConfig`, `loadConfigFile`, config-path
   helpers
 - **`stdin.go`** — stdin validation, `/dev/tty` reopen, stdin renderer prep
@@ -392,7 +408,8 @@ one reopens; a lost one becomes outdated (resolved stays resolved) and keeps its
 still exists and no current annotation took it, otherwise it is detached to a negative line number
 (rendered nowhere, listed in `@`). Annotations without an anchor get one captured at their current
 line. `Add` replaces an existing annotation as a whole, so an edit reopens and re-sends it.
-`FormatOutput` emits only `Pending()` annotations (open and not delivered); `PendingCount`,
+`FormatOutput` emits only `Pending()` annotations (open and not delivered), `FormatOpen` every open
+one (`--print-annotations=all`); `PendingCount`,
 `PendingFiles`, `MarkDelivered` and `DiscardPending` serve the output, history and `Q` paths. Without
 a review session nothing is ever marked delivered, so output behaves as before.
 

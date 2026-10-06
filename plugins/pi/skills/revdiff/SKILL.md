@@ -1,6 +1,6 @@
 ---
 name: revdiff
-description: Pi-only interactive diff and file review with revdiff. Use when the user explicitly asks for revdiff, interactive annotations, or captured revdiff comments inside pi.
+description: Pi-only interactive diff and file review with revdiff. Use when the user explicitly asks for revdiff, interactive annotations, or captured revdiff comments inside pi, including pending review-session comments ("grab my revdiff comments").
 ---
 
 # revdiff for pi
@@ -115,8 +115,18 @@ Behavior:
 - If revdiff exits without captured annotations, report that no annotations were captured and stop.
 - When recent agent work created new untracked files, include `--untracked` so those files appear in the review tree.
 - Include `--filter-unreviewed` only when the user asks for the tree limited to files not marked reviewed; `F` toggles the same filter during the review.
-- In git repositories revdiff resumes the branch's review session silently (reviewed marks and annotations persist across runs). A review returns only annotations not delivered before — earlier rounds' comments, outdated and resolved ones are not repeated — so treat each result as the next increment. Do not pass `--session` or `--no-session` unless the user asks to start over (`--session=new`), names a session, or asks not to persist the review.
+- In git repositories revdiff resumes the branch's review session silently (reviewed marks and annotations persist across runs). A review returns only annotations not delivered before — earlier rounds' comments, outdated and resolved ones are not repeated — so treat each result as the next increment. A review the user quits in a plain terminal leaves its comments pending for `revdiff --print-annotations`. Do not pass `--session` or `--no-session` unless the user asks to start over (`--session=new`), names a session, or asks not to persist the review.
 - When launching after analysis or refactor work, include `--description` or `--description-file` so the info popup explains the review context.
+
+## Pending session comments
+
+If the user says "grab my revdiff comments", "fetch my review comments", "process my review comments", or similar, the user annotated in revdiff on their own and wants you to act on comments you have not received yet. Quitting revdiff in a plain terminal prints the comments but keeps them pending in the branch's review session (git). Do not launch `revdiff_review`; run this in the repository, on the reviewed branch:
+
+```bash
+revdiff --print-annotations
+```
+
+Process the output through the same annotation handling loop as a captured review (kind labels apply). revdiff re-checks each comment against the current code (comments whose line changed are left out) and marks what it printed as delivered, so a second call prints nothing; empty output means there are no unsent comments. Pass the reviewed refs (e.g. `revdiff --print-annotations main..feature`) only when the user reviewed a range whose target branch is not checked out, and `--session=<name>` only when the user names a session. Use `--print-annotations=all` only when the user asks to re-send every comment, including ones already delivered. Outside git there are no sessions; use the review history instead.
 
 ## Existing review history
 

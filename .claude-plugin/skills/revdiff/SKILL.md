@@ -1,6 +1,6 @@
 ---
 name: revdiff
-description: Review diffs, files, and documents with inline annotations in a TUI overlay, or answer questions about revdiff usage, configuration, themes, and keybindings. Opens revdiff in agterm/tmux/zellij/herdr/kitty/wezterm/cmux/ghostty/iterm2/emacs-vterm, captures annotations, and addresses them. Works in git, hg, and jj repos (auto-detected). Activates on "revdiff", "review diff", "review changes", "annotate diff", "git review with revdiff", "hg review with revdiff", "review jj change", "interactive diff review", "revdiff all files", "review all files", "browse all files", "revdiff <file>", "revdiff README.md", "revdiff /tmp/notes.txt", "review this file", "annotate this file", "review file with revdiff", "open this review in revdiff", "show review in revdiff", "review in revdiff", "revdiff config", "revdiff themes", "revdiff keybindings", "how to configure revdiff", "what themes does revdiff have".
+description: Review diffs, files, and documents with inline annotations in a TUI overlay, or answer questions about revdiff usage, configuration, themes, and keybindings. Opens revdiff in agterm/tmux/zellij/herdr/kitty/wezterm/cmux/ghostty/iterm2/emacs-vterm, captures annotations, and addresses them. Works in git, hg, and jj repos (auto-detected). Activates on "revdiff", "review diff", "review changes", "annotate diff", "git review with revdiff", "hg review with revdiff", "review jj change", "interactive diff review", "revdiff all files", "review all files", "browse all files", "revdiff <file>", "revdiff README.md", "revdiff /tmp/notes.txt", "review this file", "annotate this file", "review file with revdiff", "open this review in revdiff", "show review in revdiff", "review in revdiff", "revdiff config", "revdiff themes", "revdiff keybindings", "how to configure revdiff", "what themes does revdiff have", "grab my revdiff comments", "fetch my review comments", "process my review comments".
 argument-hint: 'optional: ref(s), "all files", or file path'
 allowed-tools: [Bash, Read, Edit, Write, Grep, Glob]
 ---
@@ -19,6 +19,7 @@ Review diffs with inline annotations using revdiff TUI in a terminal overlay. Wo
 - "revdiff README.md", "revdiff docs/plan.md", "revdiff /tmp/notes.txt" — single-file review (`--only` mode)
 - "review this file", "annotate this file", "review file with revdiff"
 - "open this review in revdiff", "show review in revdiff", "review in revdiff" — open an in-session review (preload mode)
+- "grab my revdiff comments", "fetch my review comments", "process my review comments" — print the pending comments of the branch's review session (`--print-annotations`)
 
 ## Answering Questions
 
@@ -27,6 +28,16 @@ If the user asks a question about revdiff (configuration, themes, keybindings, i
 - `references/install.md` — installation methods and plugin setup
 - `references/config.md` — config file, options, colors, chroma themes
 - `references/usage.md` — examples, key bindings, output format
+
+## Fetching Pending Session Comments
+
+If the user says things like "grab my revdiff comments", "fetch my review comments", "process my review comments", or "I left some comments in revdiff, take a look" — the user annotated in revdiff on their own and wants Claude to act on comments it has not received yet. Quitting revdiff in a plain terminal prints the comments but keeps them pending in the branch's review session (git), so nothing is lost between runs. Run this in the repository, on the reviewed branch:
+
+```bash
+revdiff --print-annotations
+```
+
+Treat the output exactly like annotations returned from a launched review: process it from Step 3 (kind labels apply) through Step 3.5 classification. revdiff re-checks each comment against the current code first (comments whose line changed are outdated and left out) and marks what it printed as delivered, so a second call prints nothing; empty output means there are no unsent comments — say so, and only fall back to the review history below if the user insists comments exist. Working-tree, `--staged` and single-ref reviews all belong to the checked-out branch; pass the reviewed refs (e.g. `revdiff --print-annotations main..feature`) only when the user reviewed a range whose target branch is not checked out, and `--session=<name>` only when the user names a session. Use `--print-annotations=all` only when the user asks to re-send every comment, including ones already delivered. In a git repository prefer this over the history file whenever the user asks for comments they have not handed off yet; outside git (or with `--no-session`) there are no sessions and it fails, so use the review history.
 
 ## Using Existing Review History
 
@@ -126,7 +137,7 @@ Pass `--start-at-change` only when the user explicitly asks for that cursor pref
 
 Pass `--filter-unreviewed` only when the user asks for the tree limited to files not marked reviewed; never infer it automatically. The `F` key toggles the same filter during the review.
 
-In git repositories revdiff keeps a review session per branch and resumes it silently: files the user already marked reviewed stay reviewed, files that changed since show as changed since review, and earlier annotations are carried over (those whose line changed are flagged outdated); a branch without a session of its own starts from the nearest ancestor branch's session. The annotations a review returns are only the new or edited ones not yet delivered: comments already returned in an earlier round, outdated ones and ones the user resolved are not repeated, so treat each result as the next increment and do not expect earlier feedback to be restated. An empty result after a resumed review means nothing new, not that earlier feedback was withdrawn. Do not pass `--session` or `--no-session` on automatic launches. Pass `--session=new` only when the user asks to start the review over from scratch, `--session=<name>` only when the user names a session, and `--no-session` only when the user asks not to persist the review.
+In git repositories revdiff keeps a review session per branch and resumes it silently: files the user already marked reviewed stay reviewed, files that changed since show as changed since review, and earlier annotations are carried over (those whose line changed are flagged outdated); a branch without a session of its own starts from the nearest ancestor branch's session. The annotations a review returns are only the new or edited ones not yet delivered: comments already returned in an earlier round, outdated ones and ones the user resolved are not repeated, so treat each result as the next increment and do not expect earlier feedback to be restated. An empty result after a resumed review means nothing new, not that earlier feedback was withdrawn. A review the user quits in a plain terminal (outside the launcher) leaves its comments pending; see "Fetching Pending Session Comments". Do not pass `--session` or `--no-session` on automatic launches. Pass `--session=new` only when the user asks to start the review over from scratch, `--session=<name>` only when the user names a session, and `--no-session` only when the user asks not to persist the review.
 
 Run the launcher through the override-chain resolver:
 

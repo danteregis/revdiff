@@ -62,6 +62,7 @@ Then uncomment and edit the values you want to change.
 | `--history-dir` | `REVDIFF_HISTORY_DIR` | Directory for review history auto-saves | `~/.config/revdiff/history/` |
 | `--session` | `REVDIFF_SESSION` | Review session to resume by name, or `new` for a fresh one | latest session of the branch |
 | `--no-session` | `REVDIFF_NO_SESSION` | Disable review session persistence | `false` |
+| `--print-annotations` | | Print review-session annotations and exit: `pending` or `all` | `pending` when given without a value |
 | `--keys` | `REVDIFF_KEYS` | Path to keybindings file | `~/.config/revdiff/keybindings` |
 | `--dump-keys` | | Print effective keybindings to stdout and exit | |
 | `--config` | `REVDIFF_CONFIG` | Path to config file | `~/.config/revdiff/config` |
