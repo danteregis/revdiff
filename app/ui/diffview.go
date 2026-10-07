@@ -286,6 +286,8 @@ func (m Model) renderDiff() string {
 	annotationMap, fileComment := m.buildAnnotationMap()
 	var b strings.Builder
 	m.renderFileAnnotationHeader(&b, fileComment)
+	m.renderNotesHeader(&b)
+	notesInline := m.notesInline()
 
 	m.renderCache.rebase(m.globalRenderKey(), len(m.file.lines))
 	// a large diff assembles into megabytes; without this the builder reallocates its way
@@ -295,7 +297,7 @@ func (m Model) renderDiff() string {
 		b.Grow(n)
 	}
 	for i, dl := range m.file.lines {
-		flags := m.lineRenderFlags(i, annotationMap)
+		flags := m.lineRenderFlags(i, annotationMap, notesInline)
 		if block, ok := m.renderCache.get(i, flags); ok {
 			b.WriteString(block)
 			continue
@@ -303,6 +305,7 @@ func (m Model) renderDiff() string {
 		var lb strings.Builder
 		m.renderDiffLine(&lb, i, dl)
 		m.renderAnnotationOrInput(&lb, i, annotationMap)
+		m.renderInlineNotes(&lb, i)
 		block := lb.String()
 		m.renderCache.put(i, flags, block)
 		b.WriteString(block)
@@ -350,10 +353,19 @@ func (m Model) globalRenderKey() globalRenderKey {
 }
 
 // lineRenderFlags captures the per-line state a cached block was rendered under.
-func (m Model) lineRenderFlags(idx int, annotationMap map[annotLineKey]string) lineRenderFlags {
+// notesInline is notesInline(), resolved once per render by the caller.
+func (m Model) lineRenderFlags(idx int, annotationMap map[annotLineKey]string, notesInline bool) lineRenderFlags {
 	f := lineRenderFlags{
 		cursor:      m.isCursorLine(idx),
 		searchMatch: m.search.matchSet[idx],
+	}
+	// Claude's notes: the ◆ marker in the cursor column, and the inline block under
+	// the line whose render key changes whenever the notes it paints change
+	if len(m.notes.at[idx]) > 0 {
+		f.noteMark = true
+		if notesInline {
+			f.noteKey = m.notes.keys[idx]
+		}
 	}
 	// the live input row carries textinput's own state (value, cursor position), which is
 	// not reducible to a comparable key — mark it uncacheable rather than key on it.
@@ -426,7 +438,7 @@ func (m Model) renderDiffLine(b *strings.Builder, idx int, dl diff.DiffLine) {
 
 	// wrap mode: break long lines at word boundaries (dividers are short, skip them)
 	if m.modes.wrap && dl.ChangeType != diff.ChangeDivider {
-		m.renderWrappedDiffLine(b, dl, textContent, hasHighlight, isCursor, isSearchMatch)
+		m.renderWrappedDiffLine(b, dl, textContent, hasHighlight, m.cursorCell(idx, isCursor), isSearchMatch)
 		return
 	}
 
@@ -449,15 +461,12 @@ func (m Model) renderDiffLine(b *strings.Builder, idx int, dl diff.DiffLine) {
 	}
 	content = m.extendLineBg(content, lineBg)
 
-	cursor := " "
-	if isCursor {
-		cursor = m.renderer.DiffCursor(m.cfg.noColors)
-	}
-	b.WriteString(cursor + numGutter + blGutter + content + "\n")
+	b.WriteString(m.cursorCell(idx, isCursor) + numGutter + blGutter + content + "\n")
 }
 
 // renderWrappedDiffLine renders a diff line with word wrapping, producing continuation lines with ↪ markers.
-func (m Model) renderWrappedDiffLine(b *strings.Builder, dl diff.DiffLine, textContent string, hasHighlight, isCursor, isSearchMatch bool) {
+// cell is the first row's cursor-column cell (see cursorCell); continuation rows get a space.
+func (m Model) renderWrappedDiffLine(b *strings.Builder, dl diff.DiffLine, textContent string, hasHighlight bool, cell string, isSearchMatch bool) {
 	numGutter, blGutter := m.lineGutters(dl)
 	numBlank, blBlank := m.gutterBlanks()
 
@@ -481,8 +490,8 @@ func (m Model) renderWrappedDiffLine(b *strings.Builder, dl diff.DiffLine, textC
 		styled = m.extendLineBg(styled, m.resolver.LineBg(dl.ChangeType))
 
 		cursor := " "
-		if i == 0 && isCursor {
-			cursor = m.renderer.DiffCursor(m.cfg.noColors)
+		if i == 0 {
+			cursor = cell
 		}
 		b.WriteString(cursor + ng + bg + styled + "\n")
 	}
@@ -816,12 +825,9 @@ func (m Model) effectiveWrapIndent() int {
 // diffContentWidth returns the available width for diff line content.
 // accounts for borders, cursor bar, and 1 char right padding to prevent text from touching the pane border.
 func (m Model) diffContentWidth() int {
-	if m.treePaneHidden() {
-		// tree hidden or single-file without TOC: diff pane borders (2) + cursor bar (1) + right padding (1)
-		return max(10, m.layout.width-4)
-	}
-	// multi-file or single-file with TOC: diff pane width minus borders (4) minus tree width, minus bar (1), minus right padding (1)
-	return max(10, m.layout.width-m.layout.treeWidth-4-2)
+	// diff pane inner width (terminal minus borders, the tree/TOC pane and the notes
+	// pane) minus the cursor bar (1) and right padding (1)
+	return max(10, m.diffPaneWidth()-2)
 }
 
 // annotLineKey identifies a line annotation for render-path lookups. Comparable on
@@ -886,7 +892,9 @@ type lineRenderFlags struct {
 	annotCursor bool
 	hasComment  bool
 	liveInput   bool
+	noteMark    bool // the line has Claude's notes: ◆ in the cursor column
 	comment     string
+	noteKey     string // render key of the inline note block, "" when notes are in the pane
 }
 
 // diffRenderCache memoizes each diff line's rendered block (the line plus any
@@ -957,6 +965,7 @@ func (c *diffRenderCache) put(idx int, flags lineRenderFlags, block string) {
 // intra-line ranges MUST call this.
 func (m *Model) invalidateRenderCaches() {
 	clear(m.annot.rowCache)
+	clear(m.notes.rowCache)
 	m.renderCache.clear()
 }
 

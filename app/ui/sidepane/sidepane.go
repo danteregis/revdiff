@@ -57,8 +57,11 @@ type FileTreeRender struct {
 	Width     int
 	Height    int
 	Annotated map[string]bool
-	Resolver  Resolver
-	Renderer  Renderer
+	// NoteCounts holds the number of Claude's notes per file, shown as ◆N after
+	// the name; nil (no notes) renders the tree unchanged.
+	NoteCounts map[string]int
+	Resolver   Resolver
+	Renderer   Renderer
 }
 
 // ScrollState reports the visible window state for a sidepane component.

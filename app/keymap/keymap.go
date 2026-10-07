@@ -80,6 +80,12 @@ const (
 	ActionNewSession             Action = "new_session"
 	ActionResolveAnnotation      Action = "resolve_annotation"
 	ActionSessions               Action = "sessions"
+	ActionToggleNotes            Action = "toggle_notes"
+	ActionToggleOverview         Action = "toggle_overview"
+	ActionReplyNote              Action = "reply_note"
+	ActionNoteToAnnotation       Action = "note_to_annotation"
+	ActionNextNote               Action = "next_note"
+	ActionPrevNote               Action = "prev_note"
 )
 
 // SectionPane is the help section name for pane-related keybindings.
@@ -114,6 +120,12 @@ var validActions = map[Action]bool{
 	ActionNewSession:        true,
 	ActionResolveAnnotation: true,
 	ActionSessions:          true,
+	ActionToggleNotes:       true,
+	ActionToggleOverview:    true,
+	ActionReplyNote:         true,
+	ActionNoteToAnnotation:  true,
+	ActionNextNote:          true,
+	ActionPrevNote:          true,
 }
 
 // deprecatedActionAliases maps obsolete action names parsed from user
@@ -272,6 +284,14 @@ func defaultDescriptions() []HelpEntry {
 		{ActionSessions, "review sessions (switch, rename, delete)", "Session"},
 		{ActionNewSession, "start a new review session", "Session"},
 
+		// Claude's notes
+		{ActionToggleNotes, "show/hide the notes pane", "Notes"},
+		{ActionNextNote, "next note (reading order, across files)", "Notes"},
+		{ActionPrevNote, "previous note (reading order, across files)", "Notes"},
+		{ActionReplyNote, "reply to the note", "Notes"},
+		{ActionNoteToAnnotation, "turn the note into a suggestion annotation", "Notes"},
+		{ActionToggleOverview, "fold/unfold the file overview", "Notes"},
+
 		// quit
 		{ActionQuit, "quit", "Quit"},
 		{ActionDiscardQuit, "discard and quit", "Quit"},
@@ -340,6 +360,12 @@ func defaultBindings() map[string]Action {
 		"b":      ActionSwitchRef,
 		"ctrl+n": ActionNewSession,
 		"S":      ActionSessions,
+		">":      ActionToggleNotes,
+		")":      ActionNextNote,
+		"(":      ActionPrevNote,
+		"r":      ActionReplyNote,
+		"c":      ActionNoteToAnnotation,
+		"-":      ActionToggleOverview,
 		"esc":    ActionDismiss,
 	}
 }

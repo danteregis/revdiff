@@ -24,6 +24,7 @@ import (
 	"github.com/umputun/revdiff/app/handoff"
 	"github.com/umputun/revdiff/app/highlight"
 	"github.com/umputun/revdiff/app/keymap"
+	"github.com/umputun/revdiff/app/notes"
 	"github.com/umputun/revdiff/app/session"
 	"github.com/umputun/revdiff/app/theme"
 	"github.com/umputun/revdiff/app/ui"
@@ -155,6 +156,7 @@ func run(opts options) (int, error) {
 		commitLogger       diff.CommitLogger
 		refSource          ui.RefSource
 		sessions           ui.SessionStore
+		notesRepo          *notes.Repo
 		vcsType            diff.VCSType
 		err                error
 	)
@@ -211,6 +213,7 @@ func run(opts options) (int, error) {
 		commitLogger = setup.commitLogger
 		refSource = setup.refSource
 		sessions = setup.sessions
+		notesRepo = setup.notes
 		vcsType = setup.vcsType
 	}
 
@@ -260,6 +263,7 @@ func run(opts options) (int, error) {
 		PostFlushHook:        postFlushHook,
 		RefSource:            refSource,
 		Sessions:             sessions,
+		Notes:                notesUIStore(notesRepo),
 		SessionName:          sessionName,
 		NewSession:           freshSession,
 		PreloadedAnnotations: opts.Annotations != "",
@@ -322,6 +326,7 @@ func run(opts options) (int, error) {
 	stop := guard.watch(p)
 	defer stop()
 	finalModel, runErr := p.Run()
+	notesRepo.Close() // tells an agent waiting in `revdiff inbox --wait` that the review closed
 	// capture the signal flag once: a signal can land between reads, so a graceful
 	// runErr==nil exit must not observe wasSignaled flipping to true mid-tail.
 	signaled := guard.wasSignaled()
@@ -357,6 +362,15 @@ func run(opts options) (int, error) {
 		return 0, fmt.Errorf("TUI error: %w", runErr)
 	}
 	return 0, nil
+}
+
+// notesUIStore returns repo as the UI's notes store, or a true nil interface
+// when there is none (a nil *notes.Repo in the interface would be a typed nil).
+func notesUIStore(repo *notes.Repo) ui.NotesStore {
+	if repo == nil {
+		return nil
+	}
+	return repo
 }
 
 type tuiOutput struct {

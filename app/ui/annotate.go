@@ -750,7 +750,7 @@ func (m Model) hunkLineHeight(idx int, hunks []int, annotationSet map[string]boo
 			h += m.wrappedAnnotationLineCount(key)
 		}
 	}
-	return h
+	return h + len(m.inlineNoteRows(idx))
 }
 
 // cursorViewportY computes the actual viewport Y position of the cursor,
@@ -772,16 +772,11 @@ func (m Model) cursorViewportYUsing(hunks []int, annotationSet map[string]bool) 
 		return max(0, m.nav.diffCursor)
 	}
 
-	fileAnnotationOffset := 0
-	if m.hasFileAnnotation() {
-		fileAnnotationOffset = m.wrappedAnnotationLineCount(annotKeyFile)
-	}
-
 	if m.nav.diffCursor == -1 {
 		return 0
 	}
 
-	y := fileAnnotationOffset
+	y := m.diffHeaderRows()
 	for i := 0; i < m.nav.diffCursor && i < len(m.file.lines); i++ {
 		y += m.hunkLineHeight(i, hunks, annotationSet)
 	}
@@ -796,10 +791,7 @@ func (m Model) cursorViewportYUsing(hunks []int, annotationSet map[string]bool) 
 // position in O(1) instead of rescanning all preceding lines.
 func (m Model) cursorVisualOffsets(hunks []int, annotationSet map[string]bool) []int {
 	offsets := make([]int, len(m.file.lines))
-	y := 0
-	if m.hasFileAnnotation() {
-		y = m.wrappedAnnotationLineCount(annotKeyFile)
-	}
+	y := m.diffHeaderRows()
 	for i := range m.file.lines {
 		offsets[i] = y
 		y += m.hunkLineHeight(i, hunks, annotationSet)
@@ -860,8 +852,10 @@ func (m Model) rowOnAnnotationSubLine(idx, relRow, h int, hunks []int, annSet ma
 	if !annSet[key] {
 		return false
 	}
+	// the annotation rows sit between the diff line and any inline note rows
 	annRows := m.wrappedAnnotationLineCount(key)
-	return annRows > 0 && relRow >= h-annRows
+	noteRows := len(m.inlineNoteRows(idx))
+	return annRows > 0 && relRow >= h-noteRows-annRows && relRow < h-noteRows
 }
 
 // visualRowToDiffLine maps a visual row within the diff viewport content back
@@ -891,15 +885,13 @@ func (m Model) visualRowToDiffLine(row int) (idx int, onAnnotation bool) {
 	}
 	annSet := m.buildAnnotationSet()
 
-	running := 0
-	if m.hasFileAnnotation() {
-		fileRows := m.wrappedAnnotationLineCount(annotKeyFile)
-		if row < fileRows {
-			return -1, false
-		}
-		running = fileRows
-	} else if row < 0 {
-		// no file annotation, row above the top: pick the first visible line
+	if m.hasFileAnnotation() && row < m.wrappedAnnotationLineCount(annotKeyFile) {
+		return -1, false
+	}
+	running := m.diffHeaderRows()
+	if row < running {
+		// above the first line (no file annotation) or on the inline overview:
+		// pick the first visible line
 		for i := range m.file.lines {
 			if m.hunkLineHeight(i, hunks, annSet) > 0 {
 				return i, false

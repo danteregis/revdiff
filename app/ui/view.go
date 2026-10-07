@@ -34,12 +34,7 @@ func (m Model) View() string {
 	// long filename causes lipgloss to soft-wrap the header onto multiple
 	// rows, which would push viewport rows past applyScrollbar's hardcoded
 	// diffScrollbarFirstViewportRow offset.
-	var diffPaneW int
-	if m.treePaneHidden() {
-		diffPaneW = m.layout.width - 2
-	} else {
-		diffPaneW = m.layout.width - m.layout.treeWidth - 4
-	}
+	diffPaneW := m.diffPaneWidth()
 
 	// diff pane title
 	diffTitle := "no file selected"
@@ -70,8 +65,14 @@ func (m Model) View() string {
 
 	default:
 		annotated := m.annotatedFiles()
-		treeContent := m.tree.Render(sidepane.FileTreeRender{Width: m.layout.treeWidth, Height: ph, Annotated: annotated, Resolver: m.resolver, Renderer: m.renderer})
+		treeContent := m.tree.Render(sidepane.FileTreeRender{Width: m.layout.treeWidth, Height: ph, Annotated: annotated,
+			NoteCounts: m.noteCounts(), Resolver: m.resolver, Renderer: m.renderer})
 		mainView = m.renderTwoPaneLayout(treeContent, diffContent, m.tree.ScrollState(), ph, diffPaneW)
+	}
+
+	// the notes pane sits right of the diff pane; diffPaneW already left room for it
+	if m.notesPaneVisible() {
+		mainView = lipgloss.JoinHorizontal(lipgloss.Top, mainView, m.renderNotesPane(ph))
 	}
 
 	mainView = m.overlay.Compose(mainView, overlay.RenderCtx{Width: m.layout.width, Height: m.layout.height, Resolver: m.resolver})
@@ -148,6 +149,8 @@ func (m Model) transientHint() string {
 	switch {
 	case m.session.hint != "":
 		return m.session.hint
+	case m.notes.hint != "":
+		return m.notes.hint
 	case m.reload.hint != "":
 		return m.reload.hint
 	case m.refs.hint != "":
@@ -180,6 +183,10 @@ func (m Model) statusBarText() string {
 
 	if m.annot.annotating {
 		return "[enter] save  [esc] cancel"
+	}
+
+	if m.notes.reply.active {
+		return m.replyPrompt(m.notes.reply.noteID) + m.notes.reply.input.View()
 	}
 
 	if hint := m.transientHint(); hint != "" {
@@ -230,6 +237,7 @@ func (m Model) statusBarText() string {
 			rightParts = append(rightParts, fmt.Sprintf("%d outdated", outdated))
 		}
 	}
+	rightParts = append(rightParts, m.notesStatusParts()...)
 	rightParts = append(rightParts, m.statusModeIcons(), "? help")
 
 	// build separator with muted foreground using raw ANSI (not lipgloss.Render)

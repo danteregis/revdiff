@@ -304,6 +304,27 @@ func TestFileTree_Render(t *testing.T) {
 	assert.Contains(t, result, "main.go")
 }
 
+func TestFileTree_RenderNoteCounts(t *testing.T) {
+	ft := NewFileTree(fileEntries("a.go", "b.go", "c.go"))
+	ft.cursor = 1 // a.go (after the "./" directory row)
+	res := style.NewResolver(style.Colors{Accent: "#5f87ff", Normal: "#d0d0d0", Muted: "#6c6c6c", SelectedFg: "#ffffaf", SelectedBg: "#303030", Annotation: "#ffd700"})
+	rnd := style.NewRenderer(res)
+	accent := string(res.Color(style.ColorKeyAccentFg))
+
+	without := ft.Render(FileTreeRender{Width: 30, Height: 10, Resolver: res, Renderer: rnd})
+	assert.NotContains(t, without, "◆")
+	assert.Equal(t, without, ft.Render(FileTreeRender{Width: 30, Height: 10, NoteCounts: map[string]int{}, Resolver: res, Renderer: rnd}),
+		"no counts render the tree unchanged")
+
+	result := ft.Render(FileTreeRender{Width: 30, Height: 10, NoteCounts: map[string]int{"a.go": 3, "b.go": 12}, Resolver: res, Renderer: rnd})
+	lines := strings.Split(result, "\n")
+	require.Len(t, lines, 4)
+	assert.Contains(t, lines[1], "a.go  ◆3", "selected row: plain mark")
+	assert.NotContains(t, lines[1], accent)
+	assert.Contains(t, lines[2], accent+"◆12"+string(style.ResetFg), "accent with a foreground-only reset")
+	assert.NotContains(t, lines[3], "◆")
+}
+
 func TestFileTree_RenderEmpty(t *testing.T) {
 	ft := NewFileTree(nil)
 	res := style.NewResolver(style.Colors{Accent: "#5f87ff", Border: "#585858", Normal: "#d0d0d0", Muted: "#6c6c6c", SelectedFg: "#ffffaf", SelectedBg: "#303030", Annotation: "#ffd700", CursorBg: "#3a3a3a", AddFg: "#87d787", AddBg: "#022800", RemoveFg: "#ff8787", RemoveBg: "#3D0100"})

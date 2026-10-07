@@ -31,6 +31,7 @@ func (m Model) renderCollapsedDiff() string {
 
 	var b strings.Builder
 	m.renderFileAnnotationHeader(&b, fileComment)
+	m.renderNotesHeader(&b)
 
 	hasVisibleContent := false
 	hunkIdx := 0
@@ -72,6 +73,7 @@ func (m Model) renderCollapsedDiff() string {
 		hasVisibleContent = true
 
 		m.renderAnnotationOrInput(&b, i, annotationMap)
+		m.renderInlineNotes(&b, i)
 	}
 
 	if !hasVisibleContent {
@@ -171,7 +173,7 @@ func (m Model) renderCollapsedAddLine(b *strings.Builder, idx int, dl diff.DiffL
 	if m.modes.wrap {
 		m.renderWrappedCollapsedLine(b, textContent, wrappedLineCtx{
 			gutter: gutter, numGutter: numGutter, blGutter: blGutter,
-			isCursor: isCursor, hasHighlight: hasHighlight,
+			cell: m.cursorCell(idx, isCursor), hasHighlight: hasHighlight,
 			isSearchMatch: isSearchMatch,
 			lineStyle:     lineStyle, hlStyle: lineHlStyle, bgColor: bgColor,
 			prefixFg: prefixFg,
@@ -186,18 +188,15 @@ func (m Model) renderCollapsedAddLine(b *strings.Builder, idx int, dl diff.DiffL
 	content = m.applyHorizontalScroll(content, bgColor)
 	content = m.extendLineBg(content, bgColor)
 
-	cursor := " "
-	if isCursor {
-		cursor = m.renderer.DiffCursor(m.cfg.noColors)
-	}
-	b.WriteString(cursor + numGutter + blGutter + content + "\n")
+	b.WriteString(m.cursorCell(idx, isCursor) + numGutter + blGutter + content + "\n")
 }
 
 // wrappedLineCtx holds rendering context for a wrapped collapsed line,
 // reducing the parameter count of renderWrappedCollapsedLine.
 type wrappedLineCtx struct {
 	gutter, numGutter, blGutter string
-	isCursor, hasHighlight      bool
+	cell                        string // first row's cursor-column cell (see cursorCell)
+	hasHighlight                bool
 	isSearchMatch               bool // true when the row is search-matched; drives no-colors marker fallback
 	lineStyle, hlStyle          lipgloss.Style
 	bgColor, prefixFg           style.Color
@@ -220,8 +219,8 @@ func (m Model) renderWrappedCollapsedLine(b *strings.Builder, textContent string
 		styled = m.extendLineBg(styled, ctx.bgColor)
 
 		cursor := " "
-		if isFirst && ctx.isCursor {
-			cursor = m.renderer.DiffCursor(m.cfg.noColors)
+		if isFirst {
+			cursor = ctx.cell
 		}
 		b.WriteString(cursor + ng + bg + styled + "\n")
 	}

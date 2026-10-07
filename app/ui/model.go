@@ -613,6 +613,7 @@ type Model struct {
 	keys        keyState          // chord-pending state and transient hint for leader-chord keybindings
 	vim         vimState          // count accumulator, pending letter leader, and transient hint for vim-motion preset
 	wheel       wheelState        // diff-pane mouse wheel coalescing (debounced render via wheelDebounceMsg)
+	notes       notesState        // Claude's notes on the branch: live document, pane/inline state, reply input
 
 	ready        bool   // true after first WindowSizeMsg
 	filesLoaded  bool   // true after the first filesLoadedMsg is handled (keeps the loading view pinned until real data arrives)
@@ -764,6 +765,11 @@ type ModelConfig struct {
 	// NewSession starts a fresh session instead of resuming one. Ignored when
 	// Sessions is nil.
 	NewSession bool
+	// Notes reads and answers Claude's notes on the reviewed branch (the notes
+	// pane, inline notes, replies). Nil disables the feature; the composition
+	// root wires it only together with Sessions, since notes live in the
+	// branch's session directory.
+	Notes NotesStore
 	// PreloadedAnnotations is true when Store was seeded from --annotations:
 	// those annotations replace the session's instead of being replaced by
 	// them. Ignored when Sessions is nil.
@@ -937,6 +943,10 @@ func NewModel(cfg ModelConfig) (Model, error) {
 	if isNilValue(sessions) {
 		sessions = nil
 	}
+	notesStore := cfg.Notes
+	if isNilValue(notesStore) || sessions == nil {
+		notesStore = nil
+	}
 	showUntracked := cfg.ShowUntracked && cfg.LoadUntracked != nil
 	commitsApplicable := cfg.CommitsApplicable && cls != nil
 
@@ -1021,6 +1031,7 @@ func NewModel(cfg ModelConfig) (Model, error) {
 			},
 		},
 		session: sessionState{store: sessions, preloaded: cfg.PreloadedAnnotations},
+		notes:   notesState{store: notesStore, rowCache: make(map[noteRowsKey][]string)},
 	}
 	m.openSession(session.Request{Ref: cfg.Ref, Staged: cfg.Staged, Name: cfg.SessionName, Fresh: cfg.NewSession})
 	return m, nil
@@ -1041,7 +1052,7 @@ func (m Model) Discarded() bool {
 // (e.g. --stdin, standalone file, working-tree review), so tea.Batch harmlessly
 // drops it in those cases.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadFiles(), m.loadCommits())
+	return tea.Batch(m.loadFiles(), m.loadCommits(), m.pollNotes(0))
 }
 
 // Update handles messages and updates the model state.
@@ -1078,11 +1089,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWheelDebounce(msg)
 	case refBranchesLoadedMsg, refPullRequestsLoadedMsg, refResolvedMsg:
 		return m.handleRefSwitchMsg(msg)
+	case notesPolledMsg, replyEditorFinishedMsg:
+		return m.handleNotesMsg(msg)
 	}
+	return m.forwardToInput(msg)
+}
 
-	// forward other messages to textinput when annotating (e.g. paste completion).
-	// re-render only when the input text actually changed: renderDiff is O(diff lines)
-	// and repainting for a message that left the value untouched is pure waste.
+// forwardToInput hands a message no handler claimed (paste completion, cursor
+// blink) to the text input that is open, if any.
+func (m Model) forwardToInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// re-render only when the annotation text actually changed: renderDiff is O(diff
+	// lines) and repainting for a message that left the value untouched is pure waste.
 	if m.annot.annotating {
 		before := m.annot.input.Value()
 		var cmd tea.Cmd
@@ -1093,7 +1110,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// forward other messages to search textinput when searching (e.g. cursor blink)
+	if m.notes.reply.active {
+		var cmd tea.Cmd
+		m.notes.reply.input, cmd = m.notes.reply.input.Update(msg)
+		return m, cmd
+	}
+
 	if m.search.active {
 		var cmd tea.Cmd
 		m.search.input, cmd = m.search.input.Update(msg)
@@ -1114,6 +1136,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.keys.hint = ""
 	m.vim.hint = ""
 	m.session.hint = ""
+	m.notes.hint = ""
 
 	// flush any deferred wheel work (cursor pin + diff render) before the key
 	// action runs — m.nav.diffCursor must be at its final pinned position
@@ -1219,6 +1242,9 @@ func (m Model) dispatchAction(action keymap.Action) (tea.Model, tea.Cmd) {
 		return m.handleAnnotNav(action == keymap.ActionNextAnnotation)
 	case keymap.ActionReload, keymap.ActionFlushOutput, keymap.ActionNewSession:
 		return m.handleReviewStateAction(action)
+	case keymap.ActionToggleNotes, keymap.ActionToggleOverview, keymap.ActionReplyNote,
+		keymap.ActionNoteToAnnotation, keymap.ActionNextNote, keymap.ActionPrevNote:
+		return m.handleNotesAction(action)
 	default: // remaining actions (navigation, search, etc.) handled by pane-specific handlers below
 	}
 
@@ -1391,6 +1417,12 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		return true, model, cmd
 	}
 
+	// the reply input owns keys while open
+	if m.notes.reply.active {
+		model, cmd := m.handleReplyKey(msg)
+		return true, model, cmd
+	}
+
 	// search input mode takes priority after annotation
 	if m.search.active {
 		model, cmd := m.handleSearchKey(msg)
@@ -1466,11 +1498,10 @@ func (m *Model) toggleTreePane() {
 	if m.layout.treeHidden {
 		m.layout.treeWidth = 0
 		m.layout.focus = paneDiff
-		m.layout.viewport.Width = m.layout.width - 2
 	} else {
 		m.layout.treeWidth = max(minTreeWidth, m.layout.width*m.cfg.treeWidthRatio/10)
-		m.layout.viewport.Width = m.layout.width - m.layout.treeWidth - 4
 	}
+	m.layout.viewport.Width = m.diffPaneWidth()
 	m.layout.viewport.Height = m.paneHeight() - 1
 	m.syncViewportToCursor()
 }
@@ -1610,16 +1641,14 @@ func (m Model) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.layout.width = msg.Width
 	m.layout.height = msg.Height
 
-	var diffWidth int
 	if m.treePaneHidden() {
 		m.layout.treeWidth = 0
-		diffWidth = m.layout.width - 2 // diff pane borders only
 	} else {
 		// adjust tree width based on ratio (N out of 10 units);
 		// applies to multi-file mode and single-file markdown with TOC
 		m.layout.treeWidth = max(minTreeWidth, m.layout.width*m.cfg.treeWidthRatio/10)
-		diffWidth = m.layout.width - m.layout.treeWidth - 4 // borders
 	}
+	diffWidth := m.diffPaneWidth()   // borders, tree/TOC pane and notes pane excluded
 	diffHeight := m.paneHeight() - 1 // pane height minus diff header
 
 	if !m.ready {

@@ -64,6 +64,12 @@ const agentTestDoc = `{"format":"revdiff-notes/v1","author":"claude","tour":["a.
   {"line":40,"body":"no such line"}]},
  {"path":"gone.go","notes":[{"line":1,"body":"not in the diff"}]}]}`
 
+func TestNotesUIStore(t *testing.T) {
+	assert.Nil(t, notesUIStore(nil), "no repo is a true nil interface, not a typed nil")
+	repo := notes.NewRepo(func(string) string { return t.TempDir() })
+	assert.Same(t, repo, notesUIStore(repo))
+}
+
 func TestIsAgentCommand(t *testing.T) {
 	assert.True(t, isAgentCommand([]string{"notes", "import", "x"}))
 	assert.True(t, isAgentCommand([]string{"note"}))

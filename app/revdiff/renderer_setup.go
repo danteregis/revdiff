@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/umputun/revdiff/app/diff"
+	"github.com/umputun/revdiff/app/notes"
 	"github.com/umputun/revdiff/app/refsource"
 	"github.com/umputun/revdiff/app/session"
 	"github.com/umputun/revdiff/app/ui"
@@ -22,6 +23,7 @@ type vcsSetup struct {
 	commitLogger       diff.CommitLogger                        // VCS-backed commit log source; nil when VCS lacks the capability
 	refSource          ui.RefSource                             // runtime review switcher; git diffs only, nil otherwise
 	sessions           ui.SessionStore                          // review-session persistence; git diffs only, nil otherwise
+	notes              *notes.Repo                              // Claude's notes, kept beside the sessions; nil without sessions
 }
 
 // setupVCSRenderer detects the VCS and creates the appropriate renderer, blamer, and untracked function.
@@ -39,9 +41,14 @@ func setupVCSRenderer(opts options) (vcsSetup, error) {
 		if err != nil {
 			return vcsSetup{}, err
 		}
-		return vcsSetup{renderer: r, vcsType: diff.VCSGit, gitRoot: vcsRoot, workDir: workDir, blamer: g, untrackedFn: g.UntrackedFiles,
-			untrackedRenamesFn: g.UntrackedRenames, commitLogger: g, refSource: gitRefSource(opts, vcsRoot),
-			sessions: gitSessionStore(opts, vcsRoot, session.DefaultRoot())}, nil
+		setup := vcsSetup{renderer: r, vcsType: diff.VCSGit, gitRoot: vcsRoot, workDir: workDir, blamer: g, untrackedFn: g.UntrackedFiles,
+			untrackedRenamesFn: g.UntrackedRenames, commitLogger: g, refSource: gitRefSource(opts, vcsRoot)}
+		// assigned only when non-nil: a nil *session.Store in the interface field would be a typed nil
+		if ss := gitSessionStore(opts, vcsRoot, session.DefaultRoot()); ss != nil {
+			setup.sessions = ss
+			setup.notes = notes.NewRepo(ss.BranchDir)
+		}
+		return setup, nil
 	case diff.VCSHg:
 		if opts.Staged {
 			fmt.Fprintln(os.Stderr, "warning: --staged ignored in mercurial repository (no staging area)")
@@ -89,7 +96,7 @@ func gitRefSource(opts options, repoRoot string) ui.RefSource {
 // --compare-old/--compare-new never reach VCS setup, and hg, jj and file-only
 // review have no store.) A store that cannot be created is reported as a
 // warning and leaves sessions off rather than failing the review.
-func gitSessionStore(opts options, repoRoot, root string) ui.SessionStore {
+func gitSessionStore(opts options, repoRoot, root string) *session.Store {
 	if opts.NoSession || opts.AllFiles {
 		return nil
 	}

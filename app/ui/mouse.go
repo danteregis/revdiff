@@ -64,6 +64,7 @@ const (
 	hitDiff                  // diff pane body (below the diff header)
 	hitStatus                // status bar row(s)
 	hitHeader                // diff header row (file path) — currently a no-op zone
+	hitNotes                 // notes pane (right of the diff pane): wheel scrolls it, clicks are no-ops
 )
 
 // statusBarHeight returns the number of rows occupied by the status bar.
@@ -111,6 +112,11 @@ func (m Model) hitTest(x, y int) hitZone {
 		return hitNone
 	}
 
+	// the notes pane, when shown, takes the rightmost notesPaneCols() columns
+	if cols := m.notesPaneCols(); cols > 0 && x >= m.layout.width-cols {
+		return hitNotes
+	}
+
 	// tree block spans columns [0, treeWidth+1] when visible: left border +
 	// treeWidth content columns + right border = treeWidth+2 columns total.
 	// diff block picks up at column treeWidth+2.
@@ -143,7 +149,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// discarded. in the keyboard path the prompt is also replaced by a new
 	// hint from handlePendingReload, but mouse events don't transition the
 	// modal, so dropping the hint would leave an invisible modal.
-	if m.inConfirmDiscard || m.reload.pending || m.refs.pending != nil || m.session.confirmNew || m.annot.annotating || m.search.active {
+	if m.inConfirmDiscard || m.reload.pending || m.refs.pending != nil || m.session.confirmNew || m.annot.annotating || m.search.active ||
+		m.notes.reply.active {
 		return m, nil
 	}
 	if m.overlay.Active() {
@@ -184,7 +191,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.clickTree(msg.Y)
 		case hitDiff:
 			return m.clickDiff(msg.Y)
-		case hitNone, hitStatus, hitHeader:
+		case hitNone, hitStatus, hitHeader, hitNotes:
 			return m, nil
 		}
 		return m, nil
@@ -298,6 +305,8 @@ func (m Model) handleWheel(zone hitZone, delta int) (tea.Model, tea.Cmd) {
 		m.pendingAnnotJump = nil
 		m.nav.pendingHunkJump = nil
 		return m.loadSelectedIfChanged()
+	case hitNotes:
+		m.scrollNotesPane(delta)
 	case hitNone, hitStatus, hitHeader:
 		// no-op zones — wheel outside the interactive panes is ignored.
 	}

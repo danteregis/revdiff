@@ -268,6 +268,9 @@ func (m *Model) moveDiffCursorToStart() {
 
 	m.skipInitialDividers()
 	m.syncViewportToCursor()
+	if len(m.overviewRows()) > 0 {
+		m.layout.viewport.GotoTop() // the inline overview sits above the first line
+	}
 }
 
 // moveDiffCursorToEnd moves the diff cursor to the last visible non-divider line.

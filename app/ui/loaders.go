@@ -505,7 +505,7 @@ func (m Model) handleFilesLoaded(msg filesLoadedMsg) (tea.Model, tea.Cmd) {
 		m.layout.focus = paneDiff
 		m.layout.treeWidth = 0
 		if m.ready {
-			m.layout.viewport.Width = m.layout.width - 2
+			m.layout.viewport.Width = m.diffPaneWidth()
 		}
 	}
 
@@ -583,11 +583,12 @@ func (m Model) handleFileLoaded(msg fileLoadedMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.file.mdTOC != nil && !m.layout.treeHidden:
 		m.layout.treeWidth = max(minTreeWidth, m.layout.width*m.cfg.treeWidthRatio/10)
-		m.layout.viewport.Width = m.layout.width - m.layout.treeWidth - 4
+		m.layout.viewport.Width = m.diffPaneWidth()
 	case m.file.singleFile || m.layout.treeHidden:
 		m.layout.treeWidth = 0
-		m.layout.viewport.Width = m.layout.width - 2
+		m.layout.viewport.Width = m.diffPaneWidth()
 	}
+	m.locateNotes()
 
 	m.skipInitialDividers()
 	m.syncTOCActiveSection()
@@ -600,12 +601,8 @@ func (m Model) handleFileLoaded(msg fileLoadedMsg) (tea.Model, tea.Cmd) {
 		blameCmd = m.loadBlame(msg.file)
 	}
 
-	// handle pending annotation list jump
-	if m.pendingAnnotJump != nil && m.pendingAnnotJump.File == msg.file {
-		a := *m.pendingAnnotJump
-		m.pendingAnnotJump = nil
-		m.nav.pendingHunkJump = nil
-		m.positionOnAnnotation(a)
+	// handle a pending cross-file note (`)` / `(`) or annotation list jump
+	if m.applyPendingTargetJump(msg.file) {
 		return m, blameCmd
 	}
 
@@ -639,6 +636,23 @@ func (m Model) handleFileLoaded(msg fileLoadedMsg) (tea.Model, tea.Cmd) {
 	m.layout.viewport.SetContent(m.renderDiff())
 	m.layout.viewport.GotoTop()
 	return m, blameCmd
+}
+
+// applyPendingTargetJump positions the cursor on the target a cross-file note
+// walk or annotation-list jump was heading to, once file has loaded. Reports
+// whether it did.
+func (m *Model) applyPendingTargetJump(file string) bool {
+	if m.applyPendingNoteJump(file) {
+		return true
+	}
+	if m.pendingAnnotJump == nil || m.pendingAnnotJump.File != file {
+		return false
+	}
+	a := *m.pendingAnnotJump
+	m.pendingAnnotJump = nil
+	m.nav.pendingHunkJump = nil
+	m.positionOnAnnotation(a)
+	return true
 }
 
 func (m Model) handleReviewFingerprintLoaded(msg reviewFingerprintLoadedMsg) (tea.Model, tea.Cmd) {

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -40,6 +41,7 @@ type treeEntry struct {
 // reducing the parameter count of renderFileEntry.
 type renderCtx struct {
 	annotatedFiles map[string]bool
+	noteCounts     map[string]int
 	res            Resolver
 	rnd            Renderer
 }
@@ -474,7 +476,7 @@ func (ft *FileTree) Render(r FileTreeRender) string {
 	ft.EnsureVisible(r.Height)
 	end := min(ft.offset+r.Height, len(ft.entries))
 
-	rc := renderCtx{annotatedFiles: r.Annotated, res: r.Resolver, rnd: r.Renderer}
+	rc := renderCtx{annotatedFiles: r.Annotated, noteCounts: r.NoteCounts, res: r.Resolver, rnd: r.Renderer}
 	var b strings.Builder
 	for idx := ft.offset; idx < end; idx++ {
 		e := ft.entries[idx]
@@ -613,6 +615,9 @@ func (ft *FileTree) renderFileEntry(e treeEntry, idx, width int, rc renderCtx) s
 	if rc.annotatedFiles[e.path] {
 		marker = rc.rnd.FileAnnotationMark()
 	}
+	if n := rc.noteCounts[e.path]; n > 0 {
+		marker += ft.noteMark(n, isSelected, rc)
+	}
 
 	prefix := reviewMark + statusMark
 	name := prefix + e.name + marker
@@ -641,6 +646,18 @@ func (ft *FileTree) renderFileEntry(e treeEntry, idx, width int, rc renderCtx) s
 		return rc.res.Style(style.StyleKeyFileSelected).Width(maxWidth).Render(name)
 	}
 	return rc.res.Style(style.StyleKeyFileEntry).Render(name)
+}
+
+// noteMark renders the count of Claude's notes on a file as ◆N in the accent
+// color (plain on the selected row, whose style owns the colors). Raw ANSI
+// with a foreground-only reset keeps the tree background intact.
+func (ft *FileTree) noteMark(n int, selected bool, rc renderCtx) string {
+	mark := "◆" + strconv.Itoa(n)
+	accent := rc.res.Color(style.ColorKeyAccentFg)
+	if selected || accent == "" {
+		return mark
+	}
+	return string(accent) + mark + string(style.ResetFg)
 }
 
 // filterFiles returns the subset of allFiles that have annotations.
