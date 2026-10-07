@@ -8,14 +8,16 @@
 // Notes are a separate entity from the reviewer's annotations (change
 // requests) and never appear in the annotation output. They are never stored
 // in the repository: a branch's notes live in its review-session directory
-// (see session.Store.BranchDir), shared by every session of that branch:
+// (see session.Store.BranchDir), shared by every session of that branch, in a
+// notes/ subdirectory so the session listing (every *.json of the branch
+// directory) never mistakes them for a session:
 //
-//	<branch dir>/notes.json    the notes document (revdiff-notes/v1)
-//	<branch dir>/outbox.jsonl  reviewer replies, one JSON object per line
-//	<branch dir>/inbox.offset  how much of the outbox the agent has consumed
-//	<branch dir>/notes.lock    advisory lock serializing every writer
-//	<branch dir>/listener.pid  present while `revdiff inbox --wait` runs
-//	<branch dir>/viewer.pid    present while a revdiff TUI shows the notes
+//	<branch dir>/notes/notes.json    the notes document (revdiff-notes/v1)
+//	<branch dir>/notes/outbox.jsonl  reviewer replies, one JSON object per line
+//	<branch dir>/notes/inbox.offset  how much of the outbox the agent has consumed
+//	<branch dir>/notes/notes.lock    advisory lock serializing every writer
+//	<branch dir>/notes/listener.pid  present while `revdiff inbox --wait` runs
+//	<branch dir>/notes/viewer.pid    present while a revdiff TUI shows the notes
 package notes
 
 import (

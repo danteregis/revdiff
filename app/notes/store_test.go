@@ -179,7 +179,7 @@ func TestStore_ConcurrentWriters(t *testing.T) {
 	s := newTestStore(t)
 	s.now = time.Now
 	seedStore(t, s)
-	other := New(s.dir) // a second process writing the same branch
+	other := New(filepath.Dir(s.dir)) // a second process writing the same branch
 	var wg sync.WaitGroup
 	for i := range 10 {
 		wg.Go(func() {

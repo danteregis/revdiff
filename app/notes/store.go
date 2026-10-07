@@ -36,10 +36,14 @@ type Store struct {
 	now func() time.Time
 }
 
-// New returns the Store of the branch directory dir. Nothing is created until
-// the first write.
-func New(dir string) *Store {
-	return &Store{dir: dir, now: time.Now}
+// notesDir is the subdirectory of a branch's session directory holding its notes.
+const notesDir = "notes"
+
+// New returns the Store of the branch whose session directory is branchDir;
+// the notes live in its notes/ subdirectory. Nothing is created until the
+// first write.
+func New(branchDir string) *Store {
+	return &Store{dir: filepath.Join(branchDir, notesDir), now: time.Now}
 }
 
 // Stamp identifies one version of notes.json for change polling: a write
