@@ -455,6 +455,19 @@ func (s *Store) branchDir(branch string) string {
 	return filepath.Join(s.dir, escapeBranch(branch))
 }
 
+// BranchKey returns the branch a review of ref belongs to, the key Open derives
+// when Request.Branch is empty: the checked-out branch for working-tree, staged
+// and single-ref reviews, and the right side of a range. Other per-branch
+// review state (Claude's notes, app/notes) lives under BranchDir(BranchKey(ref)).
+func (s *Store) BranchKey(ref string) string {
+	return s.git.branchKey(ref)
+}
+
+// BranchDir returns the directory holding branch's sessions. It is not created.
+func (s *Store) BranchDir(branch string) string {
+	return s.branchDir(branch)
+}
+
 func (s *Store) path(branch, id string) string {
 	return filepath.Join(s.branchDir(branch), sanitizeName(id)+".json")
 }

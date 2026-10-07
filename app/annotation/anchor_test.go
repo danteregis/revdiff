@@ -54,6 +54,15 @@ func TestNewAnchor(t *testing.T) {
 	assert.Equal(t, 13, NewAnchor(lines, 4).Line, "removed lines use the old-side number")
 }
 
+func TestAnchor_Locate(t *testing.T) {
+	lines := mkLines(" a", "+target", " b", "~", " a", "+target", " c")
+	an := NewAnchor(lines, 5)
+	assert.Equal(t, 5, an.Locate(lines), "context picks the second copy")
+	assert.Equal(t, -1, (&Anchor{Line: 2, Type: "+", Content: "missing"}).Locate(lines))
+	assert.Equal(t, -1, (&Anchor{Line: 2, Type: "+", Content: "target"}).Locate(lines), "ambiguous without context")
+	assert.Equal(t, 1, (&Anchor{Line: 2, Type: "+", Content: "target", Before: []string{"a"}, After: []string{"b"}}).Locate(lines))
+}
+
 func TestReanchorFile(t *testing.T) {
 	before := mkLines(" package a", " ", "+func A() {", "+\treturn compute(1)", "+}", " ", " func B() {}")
 	anchored := func(line int, typ string) Annotation {

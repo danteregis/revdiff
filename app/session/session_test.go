@@ -155,6 +155,21 @@ func TestGitRunner_BranchKey(t *testing.T) {
 	})
 }
 
+func TestStore_BranchKeyAndDir(t *testing.T) {
+	repo := newRepo(t)
+	s := newTestStore(t, repo)
+	assert.Equal(t, "feature", s.BranchKey(""))
+	assert.Equal(t, "main", s.BranchKey("feature...main"))
+	dir := s.BranchDir("feat/x")
+	assert.Equal(t, s.dir, filepath.Dir(dir))
+	assert.Equal(t, "feat%2Fx", filepath.Base(dir))
+
+	opened, err := s.Open(Request{Ref: "main...feature"})
+	require.NoError(t, err)
+	assert.Equal(t, s.BranchDir(opened.Session.Branch), s.BranchDir(s.BranchKey("main...feature")),
+		"BranchKey resolves the branch Open uses")
+}
+
 func TestGitRunner_TipCommit(t *testing.T) {
 	repo := newRepo(t)
 	g := gitRunner{dir: repo}

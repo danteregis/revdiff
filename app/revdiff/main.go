@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -34,6 +38,14 @@ var revision = "unknown"
 const exitCodeAnnotations = 10
 
 func main() {
+	if isAgentCommand(os.Args[1:]) {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code := runAgentCommand(os.Args[1:], agentEnv{ctx: ctx, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
+			root: session.DefaultRoot(), pollEvery: 250 * time.Millisecond, beatEvery: 2 * time.Second})
+		cancel()
+		os.Exit(code)
+	}
+
 	opts, parseErr := parseArgs(os.Args[1:])
 	if parseErr != nil {
 		var flagsErr *flags.Error

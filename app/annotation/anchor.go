@@ -125,7 +125,7 @@ func reanchor(a Annotation, lines []diff.DiffLine) (_ Annotation, current bool) 
 		}
 		return a, true
 	}
-	idx := a.Anchor.locate(lines)
+	idx := a.Anchor.Locate(lines)
 	if idx < 0 {
 		if a.Status != StatusResolved {
 			a.Status = StatusOutdated
@@ -145,13 +145,13 @@ func reanchor(a Annotation, lines []diff.DiffLine) (_ Annotation, current bool) 
 	return a, true
 }
 
-// locate returns the index of the line the anchor matches best, or -1.
+// Locate returns the index of the line the anchor matches best, or -1.
 // Candidates must have the anchored type and text; the best is the one whose
 // neighbors match the recorded context most, then the one nearest the old line
 // number. A match is refused when it relies on no context at all while being
 // ambiguous (several candidates) or trivial (a brace or blank line), since
 // such a line says nothing about where the annotation belongs.
-func (an *Anchor) locate(lines []diff.DiffLine) int {
+func (an *Anchor) Locate(lines []diff.DiffLine) int {
 	best, bestScore, bestDist, candidates := -1, -1, 0, 0
 	for i, dl := range lines {
 		if string(dl.ChangeType) != an.Type || dl.Content != an.Content {
