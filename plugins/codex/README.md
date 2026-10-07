@@ -7,6 +7,7 @@ This directory contains the **Codex CLI** skills for revdiff.
 - `skills/revdiff/SKILL.md` — diff review skill (same workflow as Claude Code plugin)
 - `skills/revdiff/scripts/` — detect-ref.sh, launch-revdiff.sh, read-latest-history.sh, agentdeck-window.sh
 - `skills/revdiff/references/` — config.md, install.md, usage.md
+- `skills/revdiff-walkthrough/SKILL.md` — walkthrough skill: writes notes on the diff (`revdiff notes import`), opens revdiff with them, and answers the user's replies (`revdiff inbox --wait`, `revdiff note reply`); uses the `revdiff` skill's scripts
 - `skills/revdiff-plan/SKILL.md` — plan/response review skill (extracts last Codex assistant message)
 - `skills/revdiff-plan/scripts/` — extract-last-message.sh
 
@@ -45,6 +46,10 @@ Interactive diff review with inline annotations.
 ```
 
 Annotations are captured on exit. Codex classifies them as code-change directives or explanation requests, addresses each, and re-launches revdiff for verification.
+
+### `/revdiff-walkthrough`
+
+Walk the user through a diff with notes beside the code — an overview per file and notes on tricky lines, in a reading order. The skill imports the notes, starts the launcher in the background, and loops on `revdiff inbox --wait` to answer the user's replies until the review closes; the annotations returned at the end are handled like a `/revdiff` review.
 
 ### `/revdiff-plan`
 

@@ -14,6 +14,7 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 │    themes.go        — theme CLI commands, wiring    │
 │    history_save.go  — history-save policy           │
 │    print_annotations.go — --print-annotations       │
+│    notes_cmd.go     — notes / note / inbox commands │
 ├─────────────────────────────────────────────────────┤
 │  app/ui/ — bubbletea TUI (single Model struct)      │
 │    ├── overlay/   — popup layers (help, annots,     │
@@ -29,6 +30,7 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
 │  app/handoff/     — post-flush command preparation  │
 │  app/refsource/   — branch/PR listing for switcher  │
 │  app/session/     — per-branch review sessions      │
+│  app/notes/       — Claude's notes on a branch      │
 │  app/keymap/      — configurable keybindings        │
 │  app/theme/       — Catalog-centric theme system    │
 │  app/history/     — review session auto-save        │
@@ -55,6 +57,14 @@ TUI for reviewing diffs, files, and documents with inline annotations, built wit
   through `writeAnnotationOutput` (stdout or `-o`, same exit code), then marks the printed pending
   annotations delivered and saves the session — only after the write succeeded. Ignores
   `--include`/`--exclude` (the session covers the whole branch)
+- **`notes_cmd.go`** — the agent-facing notes commands, dispatched from `main()` before
+  `parseArgs` when the first argument is `notes`, `note` or `inbox` (`revdiff -- notes` reviews a
+  branch of that name): `notes import FILE`, `note add|overview|reply`, `inbox [--wait]`. A separate
+  go-flags parser with subcommands; `--ref` / `--staged` are parent options visible to every
+  subcommand. Each command resolves the branch the way a launch with the same ref would
+  (`session.Store.BranchKey`) and anchors notes against the current diff through `diffSnapshot`.
+  `inbox --wait` polls the outbox (250ms), refreshes the listener heartbeat (2s) and exits `0` with
+  replies, `3` on `--timeout`, `4` when the viewer marker it saw goes away, `130` on SIGINT/SIGTERM
 - **`diffsnapshot.go`** — `diffSnapshot`: the review's file set (changed + untracked + untracked
   renames + the staged-only fallback) and full-context per-file diffs without the TUI, mirroring
   `ui.loadFiles` / `fetchEffectiveFileDiff`; shared by the `--annotations` preload
@@ -186,6 +196,15 @@ across files by concern to keep files under ~500 lines:
   `RefSource` interface, async branch / pull-request list loads (`listSeq`), selection resolution
   (PR fetch, typed-ref validation; `resolveSeq`), the annotation-drop confirmation, and
   `switchRef`, which re-points `cfg.ref` and reloads through `triggerReload`
+- **`notes.go`** / **`notesview.go`** — Claude's notes (see app/notes below): consumer-side
+  `NotesStore`, the live poll (`pollNotes` → `notesPolledMsg`, a `tea.Tick` chain started in `Init`
+  that stats the notes file off the update loop and reads it only on a changed stamp, refreshing
+  the viewer heartbeat), `locateNotes` (the current file's notes located in its diff, rebuilt on
+  every file load and document change), the pane/inline decision (`notesPaneVisible`: the pane is
+  shown while the diff pane keeps ≥ 60 columns beside it), `diffPaneWidth` (the single diff-pane
+  width every layout path uses), the status-bar reply input, `c`, `)` / `(`, and rendering: the ◆
+  cursor-column marker (`cursorCell`), memoized inline blocks (`inlineNoteRows`, `overviewRows`),
+  and the pane (`renderNotesPane`)
 - **`session.go`** — review-session persistence: consumer-side `SessionStore` interface,
   `openSession` (startup, ref switch, new session) seeding the tree's reviewed marks for the
   regular fingerprint pipeline to validate and loading the session's annotations into the store,
@@ -228,6 +247,9 @@ Each source file has a matching `_test.go`.
   (`origin`, restored by the switcher's "original" entry), loaded lists, seqs, pending confirmation
 - **`sessionState` (`m.session`)** — injected `SessionStore`, the active session, the paths of the last
   accepted file list (`present`), the pending resume note, and the `new_session` confirmation
+- **`notesState` (`m.notes`)** — injected `NotesStore`, the loaded document and its stamp/branch,
+  the current file's located notes (`at`, `keys`, `file`, `lost`), pane/fold toggles, the
+  selected note, a pending cross-file note jump, the inline-row memo, pane scroll and the reply input
 
 Methods remain on `Model` — the sub-structs group mutable state for clarity, not to create
 mini-models.
@@ -519,6 +541,34 @@ through `ui.SessionStore` (`Open`, `Save`):
 Every git command runs with `cmd.Dir` set, a timeout, no shell and prompts disabled. Tests use real
 temporary repositories.
 
+### app/notes/ — Claude's notes
+
+Claude's explanations of a diff, kept per branch beside the review sessions
+(`<branch dir>/notes/`, never in the repository; a subdirectory so the session listing, which reads
+every `*.json` of the branch directory, never mistakes them for a session). Separate from
+annotations: nothing here reaches the annotation output.
+
+- **`Document`** (`notes.go`) — the `revdiff-notes/v1` format: target ref, tour (reading order), and
+  per-file notes of kind `overview` (file-level, one per file; the `overview` string is import
+  shorthand), `explain` or `caution` with `line` / `side` / `end_line`, an anchor (an
+  `annotation.Anchor`), a status (current/outdated) and a thread of turns (`you` / `claude`, the
+  reviewer's turns `pending` → `read` → `answered`). `Parse` is strict (unknown fields rejected) and
+  normalizes defaults and ids (`n1`, `n2`, …). `Note.Locate` finds a note in a diff: by anchor like
+  annotation re-anchoring, else by line and side only when the anchored text is still there;
+  `AnchorFile` places every note of a file (outdated when not found). `Replace` keeps the threads of
+  notes whose id survives an import; `AddNote`, `Answer`, `TourOrder`.
+- **`Store`** (`store.go`) — one branch: `Load` (nil when none), `Stamp` (mtime, size, inode —
+  every write is a rename, so any write changes it), `Update(fn)` (load → fn → atomic save under an
+  exclusive `flock` on `notes.lock`; readers take no lock), `Reply` (thread turn + append-only
+  `outbox.jsonl` line carrying the note and earlier thread, one locked step), `Inbox` (whole lines
+  after the consumed offset in `inbox.offset`; answered replies skipped; pending turns become read).
+- **Presence markers** (`marker.go`) — `listener.pid` (`inbox --wait`, 2s heartbeat, stale after
+  30s) and `viewer.pid` (the TUI's poll, stale after 10min because the poll stops while `$EDITOR`
+  runs); alive = fresh mtime and the pid exists. Only the owner removes a marker.
+- **`Repo`** (`repo.go`) — the TUI's per-branch view (`ui.NotesStore`), wired by the composition root
+  from `session.Store.BranchDir` only when sessions are active; `Close` (after `p.Run`) clears the
+  viewer markers it set, which is what ends a waiting agent's `inbox --wait` with exit 4.
+
 ### app/history/ — session auto-save
 
 `Save(Params)` writes review session as markdown to `~/.config/revdiff/history/`. Includes header,
@@ -574,6 +624,10 @@ belong to the consumer.
   `ModelConfig.PostFlushHook`)
 - **`RefSource`** — `Branches()`, `PullRequests()`, `PullRequestRef(n)`, `CheckRef(ref)`; implemented by
   `refsource.Source` (wired via `ModelConfig.RefSource` for git diffs only; nil disables `switch_ref`)
+- **`NotesStore`** — `Stamp(branch)`, `Load(branch)`, `Reply(branch, id, body)`, `ListenerAlive(branch)`,
+  `MarkViewing(branch)`, `UnmarkViewing(branch)`; implemented by `notes.Repo` (wired via
+  `ModelConfig.Notes` only together with `Sessions`; nil disables notes and keeps the UI
+  byte-identical)
 - **`SessionStore`** — `Open(req)`, `Save(session)`, `List(branch)`, `Rename(branch, id, name)`,
   `Delete(branch, id)`; implemented by `session.Store` (wired via
   `ModelConfig.Sessions` for git diffs only, not with `--all-files` or `--no-session`; nil disables
@@ -687,6 +741,22 @@ User presses '+' on diff line (quick_praise)
   → if --exit-code-on-annotations is enabled and output is non-empty: exit 10
 ```
 
+### Claude's Notes Flow
+
+```
+agent: revdiff notes import FILE --ref R   [notes_cmd.go]
+  → notes.Parse (strict) → diffSnapshot lines per file → Document.AnchorFile
+  → Store.Update(Replace) (flock + atomic write) → summary
+TUI: Init → pollNotes(0) → every 1s: MarkViewing, Stamp; Load when the stamp changed
+  → handleNotesPolled → setNotesDoc → locateNotes + refreshLayoutWidths + syncViewportToCursor
+  → pane (≥ 60 diff columns left) or inline rows (hunkLineHeight / diffHeaderRows include them)
+user: r → reply input (status bar) → Store.Reply → thread turn (pending) + outbox.jsonl line
+agent: revdiff inbox --wait → Store.Inbox (offset, pending → read) → JSON lines, exit 0
+agent: revdiff note reply ID → Document.Answer (turns answered) → TUI picks it up on the next poll
+user: c → annotation input prefilled (kind suggestion, quoted note) → normal annotation path
+quit: notes.Repo.Close → viewer marker removed → a waiting inbox exits 4
+```
+
 ### Source Editor Flow
 
 ```
@@ -747,7 +817,8 @@ User presses '?' / '@' / 'T' / 'P' / 'i' / 'b' / 'S'
 - **Theme files**: `~/.config/revdiff/themes/` (auto-created on first run)
 - **Keybindings**: `~/.config/revdiff/keybindings` (`map`/`unmap` format)
 - **History**: `~/.config/revdiff/history/` (auto-save dir)
-- **Sessions**: `~/.config/revdiff/sessions/` (per-branch review sessions)
+- **Sessions**: `~/.config/revdiff/sessions/` (per-branch review sessions; Claude's notes in each
+  branch's `notes/`)
 
 Theme precedence: `--theme` overwrites all 23 color fields + chroma-style, ignoring `--color-*`
 flags or env vars. Applied via `applyTheme()` in `app/revdiff/themes.go` which directly overwrites

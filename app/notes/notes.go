@@ -288,8 +288,8 @@ func (d *Document) file(path string, create bool) *File {
 	return &d.Files[len(d.Files)-1]
 }
 
-// OverviewNote returns the overview note of the file, or nil.
-func (f File) OverviewNote() *Note {
+// overviewNote returns the overview note of the file, or nil.
+func (f File) overviewNote() *Note {
 	for i := range f.Notes {
 		if f.Notes[i].Kind == KindOverview {
 			return &f.Notes[i]
@@ -501,7 +501,7 @@ func (d *Document) AddNote(path string, n Note) (Note, error) {
 	}
 	f := d.file(path, true)
 	if n.Kind == KindOverview {
-		if cur := f.OverviewNote(); cur != nil {
+		if cur := f.overviewNote(); cur != nil {
 			cur.Body = n.Body
 			return *cur, nil
 		}

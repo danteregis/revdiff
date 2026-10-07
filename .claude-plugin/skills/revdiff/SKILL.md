@@ -55,6 +55,10 @@ The history file is also the recovery path when a review is cut short by a lost 
 
 When the user asks to open an in-session review in revdiff (the conversation already contains review comments produced earlier in the session), write those comments to a temp file (e.g. `/tmp/revdiff-review-XXXXXX.md`) using the format documented in `references/usage.md` ("Output Format" section), then run the normal launcher flow (Step 1 ref detection, Step 2 invocation) with `--annotations=<temp-path>` appended. Step 3 onward handles the curated annotations as usual.
 
+## Walking the User Through a Diff
+
+When the user asks you to walk them through a diff or explain a change *inside* revdiff ("walk me through this diff", "explain this PR in revdiff", "guided review"), use the `revdiff-walkthrough` skill instead of this flow: it writes Claude's notes (a per-file overview and notes on tricky lines) with `revdiff notes import`, opens revdiff with them, and answers the user's replies live through `revdiff inbox --wait` / `revdiff note reply`. Notes never appear in the annotation output; the annotations returned when the review closes are still handled by Step 3 below. See `references/usage.md` ("Claude's Notes").
+
 ## Reviewing a Diff That Lives Outside the Working Tree
 
 Some review targets are not the current repo state: a GitHub PR diff, a patch file on disk, or `git format-patch -1 --stdout` output. Pipe the unified diff into `revdiff --stdin` and the input is parsed as a real multi-file diff (one tree entry per file, hunk navigation, per-file annotations) instead of a context-only buffer. revdiff auto-detects the unified-diff signature; on a malformed patch the input falls back silently to raw-text mode.

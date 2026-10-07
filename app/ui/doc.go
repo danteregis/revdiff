@@ -32,6 +32,12 @@
 //     reviewed marks for fingerprint validation, loading annotations), merge-saving marks, annotation
 //     re-anchoring on file-list loads, delivery marking, new_session, the sessions picker
 //   - search.go — incremental search: input handling, match computation, navigation
+//   - notes.go — Claude's notes: [NotesStore] interface, the live poll (stat, load on a changed
+//     stamp, viewer heartbeat), locating the current file's notes in its diff, pane/inline
+//     layout decision and widths, reply input and $EDITOR replies, `c` (note to suggestion
+//     annotation), `)` / `(` tour navigation, tree counts and status-bar parts
+//   - notesview.go — notes rendering: the ◆ cursor-column marker, inline note blocks and the
+//     inline overview (memoized rows that also feed the height math), and the notes pane
 //
 // Model mutable state is organized into explicit sub-structs by concern:
 //
@@ -87,6 +93,7 @@
 // [ThemeCatalog] (provides theme discovery, resolution, and persistence),
 // [ExternalEditor] (provides $EDITOR invocation for annotation temp-file editing
 // and source-file opening), [RefSource] (lists branches and pull requests and
-// resolves them to refs for the review switcher), and [SessionStore] (persists
-// per-branch review sessions). All are defined in this package and implemented externally.
+// resolves them to refs for the review switcher), [SessionStore] (persists
+// per-branch review sessions), and [NotesStore] (reads and answers Claude's notes on the
+// branch). All are defined in this package and implemented externally.
 package ui

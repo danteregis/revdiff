@@ -70,6 +70,18 @@ Then uncomment and edit the values you want to change.
 
 Config-backed options use long flag names without leading `--`; for annotation exit status use `exit-code-on-annotations = true`.
 
+## Notes Commands
+
+Agent-facing subcommands for Claude's notes (see `usage.md`, "Claude's Notes"). They take `--ref REF` (the ref the review is launched with) and `--staged`, and are not config-file options.
+
+| Command | What it does |
+|---------|--------------|
+| `revdiff notes import FILE` | Replace the branch's notes with a `revdiff-notes/v1` JSON file (`-` reads stdin): anchors every note to the current diff, keeps the discussion of notes whose `id` survives, prints a summary and warns about notes it could not place. Without `--ref` the file's `target.ref` is used |
+| `revdiff note add --file F --line N [--side +\|-\|context] [--end-line M] [--kind explain\|caution] BODY` | Add a line note; prints its id |
+| `revdiff note overview --file F BODY` | Set a file's overview; prints its id |
+| `revdiff note reply ID BODY` | Answer a note's discussion (the reviewer's replies on it become answered) |
+| `revdiff inbox [--wait] [--timeout DUR]` | Print the reviewer's new replies, one JSON object per line, and mark them read. `--wait` blocks until a reply arrives (exit `0`), `--timeout` passes (default `10m`, exit `3`), or the revdiff showing the notes closes (exit `4`) |
+
 ## Popup Size (Claude Code plugin)
 
 When launched via the Claude Code plugin skill, revdiff opens in a terminal overlay. The popup size is configurable via env vars:

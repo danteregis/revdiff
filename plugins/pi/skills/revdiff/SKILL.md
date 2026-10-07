@@ -47,6 +47,10 @@ Tool examples:
 
 After `revdiff_review` returns annotations, address them directly from the tool result content. Do not read revdiff history after a successful captured-annotation result. Exit code `10` is success-with-annotations and is handled by the extension; do not report it as a failure. If it returns no annotations, report that no annotations were captured and stop. Do not relaunch revdiff after any no-annotation result unless the user explicitly asks for another review.
 
+## Notes beside the diff
+
+revdiff can show an agent's notes on a diff (a per-file overview and notes on tricky lines) and let the user reply to them: `revdiff notes import FILE` loads a `revdiff-notes/v1` file for the branch, `revdiff inbox` prints the user's replies as JSON lines and `revdiff note reply ID "answer"` answers one (all take `--ref` with the reviewed ref). Pi suspends while revdiff runs, so there is no live back-and-forth here: when the user asks for a walkthrough, import the notes before calling `revdiff_review`, and after it returns run `revdiff inbox` and answer the replies in chat (and with `note reply`, so the answers are in the threads next time). The user's annotations remain the change requests; replies are questions.
+
 ## Annotation handling loop
 
 When annotations arrive from `/revdiff` or `revdiff_review`:

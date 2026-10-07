@@ -67,6 +67,7 @@
         <a href="#zed-integration">Zed integration</a>
         <a href="#review-history">Review history</a>
         <a href="#review-sessions">Review sessions</a>
+        <a href="#claudes-notes">Claude's notes</a>
 
         <h4>Configuration</h4>
         <a href="#config-file">Config file</a>
@@ -400,6 +401,42 @@ revdiff --only=/tmp/draft-comment.md</code></div>
         <p>To fetch comments without opening revdiff &mdash; say you added a few, quit, came back later, and now want the agent to process them &mdash; run <code>revdiff --print-annotations</code> in the repository, on the reviewed branch. It opens the session a launch with the same refs and <code>--session</code> would, re-checks every annotation against the current diff (annotations whose code changed are outdated and skipped), prints the pending ones in the normal output format, and marks them delivered, so a second call prints nothing. <code>--print-annotations=all</code> re-sends every open annotation, delivered or not (never outdated or resolved ones). <code>-o FILE</code> writes the output to a file instead (rewritten even when empty), and <code>--exit-code-on-annotations</code> exits <code>10</code> when something was printed. A branch without a session prints nothing and exits <code>0</code>. The whole branch's session is printed, so <code>--include</code> / <code>--exclude</code> are ignored; <code>--only</code>, <code>--stdin</code>, compare mode, <code>--all-files</code>, <code>--annotations</code>, <code>--no-session</code>, and <code>--session=new</code> cannot be combined with it, and it needs a git repository.</p>
         <p>Sessions are stored as JSON under <code>~/.config/revdiff/sessions/&lt;repo&gt;-&lt;hash&gt;/&lt;branch&gt;/&lt;id&gt;.json</code>, written atomically (mode <code>0600</code>) on every change, so a crash or a signal loses nothing; a session that never had any state is never written. The repository directory is keyed by a hash of the <code>origin</code> URL (or of the git common directory when there is no <code>origin</code>), so separate clones and worktrees of one project share sessions and same-named checkouts never collide. Each file records the fingerprint version; marks saved by a revdiff with a different fingerprint algorithm cannot be verified and are shown as changed since review. Sessions are not used with <code>--stdin</code>, <code>--compare-old/--compare-new</code>, <code>--all-files</code>, standalone <code>--only</code> files, or in Mercurial and Jujutsu repositories.</p>
 
+        <h2 id="claudes-notes">Claude's notes</h2>
+        <p>An AI agent can explain a diff inside revdiff: a short <strong>overview</strong> per file (what a new file is for, its entry points and collaborators) and <strong>notes</strong> on specific lines &mdash; <code>explain</code> for context, <code>caution</code> for tricky spots &mdash; in a suggested reading order. You read them beside the code, reply to a note, and the agent answers while revdiff stays open. Notes are not annotations: they never appear in the annotation output, <code>-o</code>, an <code>O</code> flush, the history file, or <code>--print-annotations</code>. The Claude Code and Codex plugins drive this with the <code>revdiff-walkthrough</code> skill (&ldquo;walk me through this diff&rdquo;).</p>
+        <p>When the branch has notes, a notes pane opens right of the diff with the current file's overview at the top and the note at or nearest the cursor, with its discussion. The pane is shown while the diff keeps at least 60 columns beside it (roughly 130 terminal columns with the file tree at its default width, 100 without it); on a narrower terminal, or after <code>&gt;</code> hides it, notes render inline as framed blocks under their lines, with the overview above the first line (<code>-</code> folds it). Lines with notes carry a <code>◆</code> in the cursor column, the tree shows <code>◆N</code> after each file with notes, and the status bar shows <code>◆</code> with the note count. The wheel over the notes pane scrolls it.</p>
+        <table>
+            <thead><tr><th>Key</th><th>Action</th></tr></thead>
+            <tbody>
+                <tr><td><code>&gt;</code></td><td>Show/hide the notes pane</td></tr>
+                <tr><td><code>)</code> / <code>(</code></td><td>Next/previous note in reading order, across files</td></tr>
+                <tr><td><code>r</code></td><td>Reply to the note at (or nearest) the cursor; <code>Ctrl+E</code> writes the reply in <code>$EDITOR</code></td></tr>
+                <tr><td><code>c</code></td><td>Turn the note into a <code>suggestion</code> annotation quoting it (a change request on the normal output path)</td></tr>
+                <tr><td><code>-</code></td><td>Fold/unfold the file overview</td></tr>
+            </tbody>
+        </table>
+        <p>Replies appear in the note's thread as <code>pending</code> until the agent answers. The status bar counts pending replies and adds <code>no agent listening</code> when no agent waits for them; they are kept and handed over the next time the agent runs <code>revdiff inbox</code>. Notes reload live &mdash; revdiff checks the notes file once a second &mdash; so notes and answers the agent adds appear without a reload and the cursor stays put. When the code changes, notes follow their line like annotations do; a note whose line is gone is listed in the pane as outdated. Notes are refreshed only when the agent imports them again.</p>
+        <p>Notes need a git review session: they are stored with the branch's sessions, never in the repository, under <code>~/.config/revdiff/sessions/&lt;repo&gt;-&lt;hash&gt;/&lt;branch&gt;/notes/</code>, and shared by every session of the branch.</p>
+        <p><strong>Commands for agents.</strong> Run them in the repository. <code>--ref</code> takes the ref the review is launched with (a range belongs to its right-hand branch, anything else to the checked-out branch) and <code>--staged</code> selects a staged review; a BODY of <code>-</code> is read from stdin.</p>
+        <table>
+            <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+            <tbody>
+                <tr><td><code>revdiff notes import FILE</code></td><td>Replace the branch's notes with a <code>revdiff-notes/v1</code> JSON file (<code>-</code> reads stdin): anchors every note to the current diff, keeps the discussion of notes whose <code>id</code> survives, prints a summary and warns about notes it could not place. Without <code>--ref</code> the file's <code>target.ref</code> is used</td></tr>
+                <tr><td><code>revdiff note add --file F --line N [--side +|-|context] [--end-line M] [--kind explain|caution] BODY</code></td><td>Add a line note; prints its id</td></tr>
+                <tr><td><code>revdiff note overview --file F BODY</code></td><td>Set a file's overview; prints its id</td></tr>
+                <tr><td><code>revdiff note reply ID BODY</code></td><td>Answer a note's discussion (the reviewer's replies on it become answered)</td></tr>
+                <tr><td><code>revdiff inbox [--wait] [--timeout DUR]</code></td><td>Print the reviewer's new replies, one JSON object per line, and mark them read. <code>--wait</code> blocks until a reply arrives (exit <code>0</code>), <code>--timeout</code> passes (default <code>10m</code>, exit <code>3</code>), or the revdiff showing the notes closes (exit <code>4</code>)</td></tr>
+            </tbody>
+        </table>
+        <pre><code>{&quot;format&quot;:&quot;revdiff-notes/v1&quot;,
+ &quot;target&quot;:{&quot;ref&quot;:&quot;origin/master...feat/ttl&quot;},
+ &quot;author&quot;:&quot;claude&quot;,
+ &quot;tour&quot;:[&quot;cache.rb&quot;,&quot;clock.rb&quot;],
+ &quot;files&quot;:[
+  {&quot;path&quot;:&quot;cache.rb&quot;,
+   &quot;overview&quot;:&quot;Adds TTL expiry to Cache. Entry points: get/set.&quot;,
+   &quot;notes&quot;:[{&quot;kind&quot;:&quot;caution&quot;,&quot;line&quot;:11,&quot;side&quot;:&quot;+&quot;,&quot;body&quot;:&quot;Expired entries are never deleted.&quot;}]}]}</code></pre>
+        <p><code>line</code> counts in the new file (<code>side</code> <code>+</code>, the default) or in the old file for a removed line (<code>-</code>); <code>end_line</code> marks a range; <code>id</code> is optional (revdiff assigns <code>n1</code>, <code>n2</code>, &hellip;); unknown fields are rejected. Each inbox line carries what the agent needs to answer: <code>{"note":{"id","file","line","side","kind","body","outdated"},"thread":[earlier turns],"reply":{"id","body","at"}}</code>. While <code>revdiff inbox --wait</code> runs it keeps a heartbeat file beside the notes, which is how revdiff knows an agent is listening; revdiff keeps one too, which is how the waiter knows the review closed. A branch literally named <code>notes</code>, <code>note</code>, or <code>inbox</code> is reviewed with <code>revdiff -- notes</code>.</p>
+
         <!-- configuration -->
         <h2 id="config-file">Config file</h2>
         <p>Location: <code>~/.config/revdiff/config</code> (INI format). Override with <code>--config</code> flag or <code>REVDIFF_CONFIG</code> env var.</p>
@@ -622,6 +659,11 @@ printf '\033]52;c;%s\007' "$data" > /dev/tty</code></div>
                 <tr><td><code>Q</code></td><td>Discard annotations not yet sent and quit</td></tr>
                 <tr><td><code>S</code></td><td>Open the review sessions picker: switch, start, rename, or delete sessions of the current branch (git only)</td></tr>
                 <tr><td><code>Ctrl+N</code></td><td>Start a new review session for the current branch (git only; confirms if marks or annotations exist)</td></tr>
+                <tr><td><code>&gt;</code></td><td>Show/hide the notes pane</td></tr>
+                <tr><td><code>)</code> / <code>(</code></td><td>Next/previous note in reading order, across files</td></tr>
+                <tr><td><code>r</code></td><td>Reply to the note at (or nearest) the cursor; <code>Ctrl+E</code> writes the reply in <code>$EDITOR</code></td></tr>
+                <tr><td><code>c</code></td><td>Turn the note into a <code>suggestion</code> annotation quoting it (a change request on the normal output path)</td></tr>
+                <tr><td><code>-</code></td><td>Fold/unfold the file overview</td></tr>
             </tbody>
         </table>
 
@@ -670,6 +712,7 @@ printf '\033]52;c;%s\007' "$data" > /dev/tty</code></div>
             <li><strong>Left-click in the file picker</strong> &mdash; jumps to the clicked file (same as pressing <code>Enter</code>). Clicks on the filter row or blank separator are ignored.</li>
             <li><strong>Scroll wheel in the file picker</strong> &mdash; moves the picker cursor. Shift+wheel uses a half-page step.</li>
             <li><strong>Left-click in the review switcher</strong> (<code>b</code>) &mdash; switches to the clicked branch, pull request, or typed ref. Section headers, the filter row, and the blank separator are ignored; the wheel moves the cursor.</li>
+            <li><strong>Scroll wheel over the notes pane</strong> (<a href="#claudes-notes">Claude's notes</a>) &mdash; scrolls the pane; clicks there are ignored.</li>
         </ul>
         <p>Horizontal wheel, right-click, middle-click, drag selection, and clicks on the status bar or diff header are intentionally ignored. Clicks outside an open overlay are swallowed &mdash; dismiss an overlay with <code>Esc</code> or its toggle key. Modal states (annotation input, search input, confirm discard, reload confirm, review-switch confirm) swallow mouse events entirely.</p>
         <p><strong>Text selection trade-off</strong> &mdash; once mouse tracking is on, plain drag is captured by revdiff. For terminal-native text selection:</p>
@@ -712,6 +755,7 @@ map alt+t&gt;n theme_select</code></div>
         <p><strong>Annotations:</strong> <code>confirm</code>, <code>annotate_file</code>, <code>delete_annotation</code>, <code>annot_list</code>, <code>open_editor</code>, <code>next_annotation</code>, <code>prev_annotation</code>, <code>flush_output</code>, <code>quick_praise</code>, <code>resolve_annotation</code></p>
         <p><strong>View:</strong> <code>toggle_collapsed</code>, <code>toggle_compact</code>, <code>toggle_wrap</code>, <code>toggle_tree</code>, <code>toggle_line_numbers</code>, <code>toggle_blame</code>, <code>toggle_word_diff</code>, <code>toggle_hunk</code>, <code>toggle_untracked</code>, <code>mark_reviewed</code>, <code>filter_unreviewed</code>, <code>theme_select</code>, <code>filter</code>, <code>info</code>, <code>reload</code>, <code>switch_ref</code></p>
         <p><strong>Session:</strong> <code>sessions</code>, <code>new_session</code></p>
+        <p><strong>Notes:</strong> <code>toggle_notes</code>, <code>next_note</code>, <code>prev_note</code>, <code>reply_note</code>, <code>note_to_annotation</code>, <code>toggle_overview</code></p>
         <p><strong>Quit:</strong> <code>quit</code>, <code>discard_quit</code>, <code>help</code>, <code>dismiss</code></p>
 
         <h2 id="vim-motion">Vim-motion preset</h2>
@@ -788,6 +832,7 @@ map alt+t&gt;n theme_select</code></div>
 "switch revdiff to dracula theme"   <span class="code-comment">-- modify config via conversation</span></code></div>
         <p>The plugin includes built-in reference documentation and can answer questions about revdiff usage, themes, keybindings, and configuration. It can also create or modify the local config file on request.</p>
         <p>The plugin supports the full review loop: annotate &rarr; plan &rarr; fix &rarr; re-review until no more annotations remain. The bundled launcher treats exit code <code>10</code> as success-with-annotations and processes stdout normally.</p>
+        <p><strong>Walkthrough:</strong> say &ldquo;walk me through this diff&rdquo; (or &ldquo;explain this PR in revdiff&rdquo;) and the <code>revdiff-walkthrough</code> skill writes Claude's notes on the diff &mdash; an overview per file and notes on tricky lines &mdash; opens revdiff with them, and answers your replies to a note (<code>r</code>) while the review stays open; the annotations you leave are still the change requests handled when you quit. See <a href="#claudes-notes">Claude's notes</a>.</p>
         <p><strong>Ask instead of instruct:</strong> an annotation containing <code>??</code> anywhere in its text is treated as a question rather than a directive, so the agent explains that code instead of changing it. Openers <code>explain</code>, <code>remind</code>, <code>describe</code>, <code>what is</code>, <code>what are</code>, <code>how does</code>, <code>how do</code> and <code>clarify</code> do the same. <code>??</code> is the language-neutral form and works whatever you write in.</p>
         <div class="code-block"><code>## renderer.go:142 (+)
 why a pointer here??
@@ -839,10 +884,11 @@ codex plugin add revdiff-planning@revdiff</code></div>
         <p>Requirements: <code>revdiff</code> binary on PATH, <code>jq</code> (only for manual <code>/revdiff-plan</code>), and a supported terminal multiplexer.</p>
 
         <h2 id="codex-skills">Skills</h2>
-        <p>The plugin provides two skills:</p>
+        <p>The plugin provides three skills:</p>
         <ul>
             <li><code>/revdiff</code> &mdash; same diff review workflow as the Claude Code plugin (detect ref, launch overlay, capture annotations, feedback loop)</li>
             <li><code>/revdiff-plan</code> &mdash; extracts the last Codex assistant message from session rollout files, opens it in revdiff for annotation, and feeds feedback back</li>
+            <li><code>/revdiff-walkthrough</code> &mdash; writes notes on a diff (<a href="#claudes-notes">Claude's notes</a>), opens revdiff with them, and answers your replies until the review closes</li>
         </ul>
         <p>Codex treats exit code <code>10</code> as success-with-annotations and keeps captured output.</p>
         <div class="code-block"><code>/revdiff              <span class="code-comment"># auto-detect ref</span>
